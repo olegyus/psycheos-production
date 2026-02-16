@@ -37,9 +37,19 @@ class Settings(BaseSettings):
     TG_WEBHOOK_SECRET_CONCEPTUALIZATOR: str
     TG_WEBHOOK_SECRET_SIMULATOR: str
 
+    # --- Admin ---
+    ADMIN_IDS: str = ""  # comma-separated telegram IDs, e.g. "123456,789012"
+
     # --- App ---
     WEBHOOK_BASE_URL: str = ""
     DEBUG: bool = False
+
+    @property
+    def admin_ids(self) -> set[int]:
+        """Parse ADMIN_IDS into a set of integers."""
+        if not self.ADMIN_IDS:
+            return set()
+        return {int(x.strip()) for x in self.ADMIN_IDS.split(",") if x.strip()}
 
     # --- Convenience mappings ---
     @property

@@ -1,5 +1,7 @@
 from app.models.user import User
 from app.models.bot_chat_state import BotChatState
 from app.models.telegram_dedup import TelegramUpdateDedup
+from app.models.invite import Invite
+from app.models.context import Context
 
-__all__ = ["User", "BotChatState", "TelegramUpdateDedup"]
+__all__ = ["User", "BotChatState", "TelegramUpdateDedup", "Invite", "Context"]
