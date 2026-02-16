@@ -7,20 +7,21 @@ from sqlalchemy.orm import DeclarativeBase
 from app.config import settings
 
 
-# Engine — connects through Supabase pooler (transaction mode)
 engine = create_async_engine(
     settings.DATABASE_URL_POOLER,
     pool_size=settings.DB_POOL_SIZE,
     max_overflow=settings.DB_MAX_OVERFLOW,
     pool_pre_ping=True,
     echo=settings.DEBUG,
+    connect_args={
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+    },
 )
 
-# Session factory
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
-# Base class for all models
 class Base(DeclarativeBase):
     pass
 
