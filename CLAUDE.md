@@ -331,4 +331,5 @@ No authentication required. Used by Railway for healthchecks.
 
 ## Принятые решения (НЕ МЕНЯТЬ)
 
-- (пока пусто, будем добавлять по ходу)
+- **LinkToken:** `jti` UUID как PK (`gen_random_uuid()`), `UNIQUE(service_id, run_id)` — одна активная сессия на пару (сервис, запуск), `subject_id` = `telegram_id` пользователя, которому выдан пропуск
+- **Alembic:** async через `create_async_engine` + asyncpg, URL берётся из `settings.DATABASE_URL` (прямое соединение, не pooler)
