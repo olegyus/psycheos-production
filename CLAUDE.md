@@ -334,3 +334,7 @@ No authentication required. Used by Railway for healthchecks.
 - **LinkToken:** `jti` UUID как PK (`gen_random_uuid()`), `UNIQUE(service_id, run_id)` — одна активная сессия на пару (сервис, запуск), `subject_id` = `telegram_id` пользователя, которому выдан пропуск
 - **Alembic:** async через `create_async_engine` + asyncpg, URL берётся из `settings.DATABASE_URL` (прямое соединение, не pooler)
 - **Порядок применения миграций:** `alembic upgrade head` применяем только после завершения всех шагов Фазы 3 — не раньше
+- **issue_link / verify_link:** вызываются напрямую из webhook-обработчиков (не через HTTP); HTTP-эндпоинты `/v1/links/*` — для тестирования и внешнего API
+- **Правило 3.4:** `role=client` допустим только для `service_id=screen`; verify для любого другого сервиса с client-токеном → reject
+- **TOKEN_TTL:** 24 часа
+- **start_param:** `str(jti)` — полный UUID со скобками, вставляется напрямую в `t.me/BotName?start={jti}`

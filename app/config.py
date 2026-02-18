@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     TG_WEBHOOK_SECRET_CONCEPTUALIZATOR: str
     TG_WEBHOOK_SECRET_SIMULATOR: str
 
+    # --- Telegram Bot Usernames (for deep links: t.me/{username}?start=TOKEN) ---
+    TG_USERNAME_SCREEN: str = ""
+    TG_USERNAME_INTERPRETATOR: str = ""
+    TG_USERNAME_CONCEPTUALIZATOR: str = ""
+    TG_USERNAME_SIMULATOR: str = ""
+
     # --- Admin ---
     ADMIN_IDS: str = ""  # comma-separated telegram IDs, e.g. "123456,789012"
 
@@ -50,6 +56,16 @@ class Settings(BaseSettings):
         if not self.ADMIN_IDS:
             return set()
         return {int(x.strip()) for x in self.ADMIN_IDS.split(",") if x.strip()}
+
+    @property
+    def tool_bot_usernames(self) -> dict[str, str]:
+        """Returns mapping: service_id -> Telegram username (without @)."""
+        return {
+            "screen": self.TG_USERNAME_SCREEN,
+            "interpretator": self.TG_USERNAME_INTERPRETATOR,
+            "conceptualizator": self.TG_USERNAME_CONCEPTUALIZATOR,
+            "simulator": self.TG_USERNAME_SIMULATOR,
+        }
 
     # --- Convenience mappings ---
     @property

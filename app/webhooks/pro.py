@@ -1,5 +1,5 @@
 """
-Pro Bot webhook handler — Phase 2.
+Pro Bot webhook handler — Phase 2 + Phase 3 (tool launcher).
 
 Flows:
 - /start (no args, unregistered) → "Access restricted"
@@ -7,9 +7,12 @@ Flows:
 - /start (registered) → main menu
 - /admin (admin only) → admin panel
 - Callback queries for menu navigation
+- case_{id} → case view with tool launch buttons
+- launch_{service_id}_{context_id} → issue link token → deep link
 """
 import logging
 import secrets
+import uuid
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select, func
@@ -23,6 +26,7 @@ from app.models.bot_chat_state import BotChatState
 from app.models.user import User
 from app.models.invite import Invite
 from app.models.context import Context
+from app.services.links import issue_link
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +110,16 @@ def back_to_main_kb() -> InlineKeyboardMarkup:
 def back_to_admin_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("◀️ Админ-панель", callback_data="admin_panel")],
+    ])
+
+
+def case_tools_kb(context_id: str) -> InlineKeyboardMarkup:
+    """Keyboard for case view — tool launch buttons + back."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧠 Интерпретатор",    callback_data=f"launch_interpretator_{context_id}")],
+        [InlineKeyboardButton("💡 Концептуализатор", callback_data=f"launch_conceptualizator_{context_id}")],
+        [InlineKeyboardButton("🎭 Симулятор",        callback_data=f"launch_simulator_{context_id}")],
+        [InlineKeyboardButton("◀️ Мои кейсы",       callback_data="cases_list")],
     ])
 
 
@@ -303,9 +317,15 @@ async def handle_callback(
             text=f"📄 *Кейс: {label}*\n"
                  f"Создан: {created}\n"
                  f"Статус: {ctx.status}\n\n"
-                 f"_Запуск инструментов — Фаза 3_",
-            reply_markup=back_to_main_kb(), parse_mode="Markdown",
+                 f"🛠 Выберите инструмент для запуска:",
+            reply_markup=case_tools_kb(str(ctx.context_id)),
+            parse_mode="Markdown",
         )
+        return
+
+    if data.startswith("launch_"):
+        _, service_id, context_id_str = data.split("_", 2)
+        await handle_launch_tool(query, bot, db, chat_id, user_id, service_id, context_id_str)
         return
 
     # ── Admin callbacks ──
@@ -372,6 +392,52 @@ async def create_case(bot, db, state, chat_id, user_id, case_name):
     await bot.send_message(
         chat_id=chat_id, text=f"✅ Кейс «{case_name}» создан.", reply_markup=main_menu_kb(),
     )
+
+
+_TOOL_LABELS = {
+    "interpretator":    "Интерпретатор",
+    "conceptualizator": "Концептуализатор",
+    "simulator":        "Симулятор",
+}
+
+
+async def handle_launch_tool(query, bot, db, chat_id, user_id, service_id, context_id_str):
+    """Issue a link token and send the deep link to the specialist."""
+    if service_id not in _TOOL_LABELS:
+        await query.answer("Неизвестный инструмент.", show_alert=True)
+        return
+
+    username = settings.tool_bot_usernames.get(service_id, "")
+    if not username:
+        await query.answer("Бот не настроен. Обратитесь к администратору.", show_alert=True)
+        return
+
+    try:
+        context_id = uuid.UUID(context_id_str)
+    except ValueError:
+        await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
+        return
+
+    token = await issue_link(
+        db,
+        service_id=service_id,
+        context_id=context_id,
+        role="specialist",
+        subject_id=user_id,
+    )
+
+    deep_link = f"https://t.me/{username}?start={token.jti}"
+    label = _TOOL_LABELS[service_id]
+
+    await bot.send_message(
+        chat_id=chat_id,
+        text=f"🔗 *{label}* готов к запуску\n\nПропуск действует 24 часа.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"▶️ Открыть {label}", url=deep_link)],
+        ]),
+        parse_mode="Markdown",
+    )
+    await query.answer()
 
 
 async def create_invite_with_note(bot, db, chat_id, user_id, note):
