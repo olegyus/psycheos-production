@@ -1,0 +1,18 @@
+{
+  "session_id": "int_415470107_c8b21252",
+  "state": "INTAKE",
+  "mode": "STANDARD",
+  "iteration_count": 0,
+  "repair_attempts": 0,
+  "material_type": "unknown",
+  "completeness": "unknown",
+  "accumulated_material": [
+    {
+      "timestamp": "2026-02-14T14:57:43.354917+00:00",
+      "content": "рисунок дом-дерево-человек"
+    }
+  ],
+  "clarifications_received": [],
+  "created_at": "2026-02-14T14:57:22.844760+00:00",
+  "updated_at": "2026-02-14T14:57:47.920403+00:00"
+}

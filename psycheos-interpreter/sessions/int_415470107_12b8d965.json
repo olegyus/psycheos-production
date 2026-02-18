@@ -1,0 +1,22 @@
+{
+  "session_id": "int_415470107_12b8d965",
+  "state": "COMPLETED",
+  "mode": "STANDARD",
+  "iteration_count": 0,
+  "repair_attempts": 0,
+  "material_type": "unknown",
+  "completeness": "unknown",
+  "accumulated_material": [
+    {
+      "timestamp": "2026-02-14T15:17:29.039999+00:00",
+      "content": "рисунок"
+    },
+    {
+      "timestamp": "2026-02-14T15:17:53.813424+00:00",
+      "content": "Рисунок клиента Дом-дерево-человек"
+    }
+  ],
+  "clarifications_received": [],
+  "created_at": "2026-02-14T15:17:18.669951+00:00",
+  "updated_at": "2026-02-14T15:18:09.633110+00:00"
+}
