@@ -1,0 +1,3 @@
+cd ~/Рабочий\ стол/psycheos-interpreter
+source .venv/bin/activate
+
