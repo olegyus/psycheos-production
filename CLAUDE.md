@@ -338,3 +338,6 @@ No authentication required. Used by Railway for healthchecks.
 - **Правило 3.4:** `role=client` допустим только для `service_id=screen`; verify для любого другого сервиса с client-токеном → reject
 - **TOKEN_TTL:** 24 часа
 - **start_param:** `str(jti)` — полный UUID со скобками, вставляется напрямую в `t.me/BotName?start={jti}`
+- **Deep-link формат:** `t.me/{bot_username}?start={jti}`, где `bot_username` берётся из `TG_USERNAME_*` env-переменных (без `@`)
+- **Callback pattern в Pro:** `launch_{service_id}_{context_id}` (split по `_` с maxsplit=2, UUID без изменений)
+- **run_id в FSM:** после успешного verify сохраняется в `BotChatState.state_payload["run_id"]`; `context_id` — в `BotChatState.context_id`
