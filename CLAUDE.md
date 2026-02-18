@@ -341,3 +341,5 @@ No authentication required. Used by Railway for healthchecks.
 - **Deep-link формат:** `t.me/{bot_username}?start={jti}`, где `bot_username` берётся из `TG_USERNAME_*` env-переменных (без `@`)
 - **Callback pattern в Pro:** `launch_{service_id}_{context_id}` (split по `_` с maxsplit=2, UUID без изменений)
 - **run_id в FSM:** после успешного verify сохраняется в `BotChatState.state_payload["run_id"]`; `context_id` — в `BotChatState.context_id`
+- **subject_id=0:** открытый токен для клиентского Screen — telegram_id клиента неизвестен в момент выдачи; `verify_link` пропускает проверку subject_id если `token.subject_id == 0`
+- **Callback для клиентской ссылки:** `screen_link_{context_id}` (отдельный паттерн от `launch_`, т.к. разные role и subject_id)

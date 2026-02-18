@@ -119,6 +119,7 @@ def case_tools_kb(context_id: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🧠 Интерпретатор",    callback_data=f"launch_interpretator_{context_id}")],
         [InlineKeyboardButton("💡 Концептуализатор", callback_data=f"launch_conceptualizator_{context_id}")],
         [InlineKeyboardButton("🎭 Симулятор",        callback_data=f"launch_simulator_{context_id}")],
+        [InlineKeyboardButton("📤 Ссылка для клиента", callback_data=f"screen_link_{context_id}")],
         [InlineKeyboardButton("◀️ Мои кейсы",       callback_data="cases_list")],
     ])
 
@@ -328,6 +329,11 @@ async def handle_callback(
         await handle_launch_tool(query, bot, db, chat_id, user_id, service_id, context_id_str)
         return
 
+    if data.startswith("screen_link_"):
+        context_id_str = data[len("screen_link_"):]
+        await handle_screen_link(query, bot, db, chat_id, context_id_str)
+        return
+
     # ── Admin callbacks ──
     if data == "admin_panel":
         if not is_admin(user_id):
@@ -399,6 +405,43 @@ _TOOL_LABELS = {
     "conceptualizator": "Концептуализатор",
     "simulator":        "Симулятор",
 }
+
+
+async def handle_screen_link(query, bot, db, chat_id, context_id_str):
+    """Issue an open client token for Screen and send the link to the specialist."""
+    username = settings.tool_bot_usernames.get("screen", "")
+    if not username:
+        await query.answer("Screen не настроен. Обратитесь к администратору.", show_alert=True)
+        return
+
+    try:
+        context_id = uuid.UUID(context_id_str)
+    except ValueError:
+        await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
+        return
+
+    # subject_id=0 — open token: client's Telegram ID is unknown at issue time
+    token = await issue_link(
+        db,
+        service_id="screen",
+        context_id=context_id,
+        role="client",
+        subject_id=0,
+    )
+
+    deep_link = f"https://t.me/{username}?start={token.jti}"
+
+    await bot.send_message(
+        chat_id=chat_id,
+        text=f"📤 *Ссылка для клиента (Screen)*\n\n"
+             f"Отправьте клиенту эту ссылку:\n`{deep_link}`\n\n"
+             f"_Пропуск действует 24 часа._",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("▶️ Открыть Screen", url=deep_link)],
+        ]),
+        parse_mode="Markdown",
+    )
+    await query.answer()
 
 
 async def handle_launch_tool(query, bot, db, chat_id, user_id, service_id, context_id_str):

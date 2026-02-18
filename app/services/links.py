@@ -74,7 +74,8 @@ async def verify_link(
         raise LinkVerifyError("Token expired")
     if token.service_id != service_id:
         raise LinkVerifyError("Token not valid for this service")
-    if token.subject_id != subject_id:
+    # subject_id=0 means open token (client Screen links — client's ID unknown at issue time)
+    if token.subject_id != 0 and token.subject_id != subject_id:
         raise LinkVerifyError("Token not valid for this user")
     # Rule 3.4: client tokens are only valid for Screen
     if token.role == "client" and token.service_id != "screen":
