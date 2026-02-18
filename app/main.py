@@ -14,9 +14,9 @@ from app.database import engine, Base
 from app.webhooks.router_factory import create_webhook_router
 from app.webhooks.pro import handle_pro
 from app.webhooks.interpretator import handle_interpretator
+from app.webhooks.conceptualizator import handle_conceptualizator
 from app.webhooks.stubs import (
     handle_screen,
-    handle_conceptualizator,
     handle_simulator,
 )
 from app.routers.links import router as links_router
