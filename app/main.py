@@ -19,6 +19,7 @@ from app.webhooks.stubs import (
     handle_conceptualizator,
     handle_simulator,
 )
+from app.routers.links import router as links_router
 
 # --- Logging ---
 logging.basicConfig(
@@ -61,6 +62,10 @@ app = FastAPI(
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": "0.1.0"}
+
+
+# --- Links API ---
+app.include_router(links_router)
 
 
 # --- Webhook routers ---
