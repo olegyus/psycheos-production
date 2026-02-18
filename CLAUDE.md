@@ -287,15 +287,15 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 
 ## Development Phases
 
-| Phase | Description                                                  | Status     |
-|-------|--------------------------------------------------------------|------------|
-| 1     | Project skeleton, DB schema, webhook pipeline                | Done       |
-| 2     | Pro bot: invite-only registration, cases, admin panel        | Done       |
-| 3     | Case tool launcher UI (Pro bot)                              | Planned    |
-| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic   | Planned    |
-| 5     | Claude AI integration for analysis tools                     | Planned    |
-| 6     | Client-side (Screen bot) session flow                        | Planned    |
-| 7     | Billing (Telegram Stars)                                     | Planned    |
+| Phase | Description                                                                        | Status          |
+|-------|------------------------------------------------------------------------------------|-----------------|
+| 1     | Project skeleton, DB schema, webhook pipeline                                      | Done            |
+| 2     | Pro bot: invite-only registration, cases, admin panel                              | Done            |
+| 3     | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | **Done**        |
+| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **Next**        |
+| 5     | Claude AI integration for analysis tools                                           | Planned         |
+| 6     | Client-side (Screen bot) session flow                                              | Planned         |
+| 7     | Billing (Telegram Stars)                                                           | Planned         |
 
 ---
 
