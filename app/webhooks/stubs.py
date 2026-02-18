@@ -1,5 +1,6 @@
 """
-Webhook handlers for Screen, Interpretator, Conceptualizator, Simulator.
+Webhook handlers for Screen, Conceptualizator, Simulator (stubs until Phase 4).
+Interpretator has been migrated to app/webhooks/interpretator.py (Phase 4).
 
 Phase 3: /start TOKEN → verify link → save context_id + run_id to FSM.
 Phase 4: full tool logic (AI calls, question flow, etc.) replaces placeholders.
@@ -117,28 +118,6 @@ async def handle_screen(
         return
 
     await _handle_tool_message(bot, chat_id, "screen", state)
-
-
-async def handle_interpretator(
-    update: Update, bot: Bot, db: AsyncSession,
-    state: BotChatState | None, chat_id: int, user_id: int | None,
-) -> None:
-    if not (update.message and update.message.text):
-        return
-    text = update.message.text.strip()
-
-    if text.startswith("/start"):
-        parts = text.split(" ", 1)
-        if len(parts) == 2 and parts[1]:
-            await _handle_tool_start(bot, db, chat_id, user_id, "interpretator", parts[1])
-        else:
-            await bot.send_message(
-                chat_id=chat_id,
-                text="❌ Доступ ограничен.\n\nЗапустите инструмент через Pro.",
-            )
-        return
-
-    await _handle_tool_message(bot, chat_id, "interpretator", state)
 
 
 async def handle_conceptualizator(

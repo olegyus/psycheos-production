@@ -13,9 +13,9 @@ from app.config import settings
 from app.database import engine, Base
 from app.webhooks.router_factory import create_webhook_router
 from app.webhooks.pro import handle_pro
+from app.webhooks.interpretator import handle_interpretator
 from app.webhooks.stubs import (
     handle_screen,
-    handle_interpretator,
     handle_conceptualizator,
     handle_simulator,
 )
