@@ -10,7 +10,7 @@ PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for 
 - **AI**: Anthropic Claude API (integrated in future phases)
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
-- **Current phase**: Phase 4 in progress — Interpretator + Conceptualizator migrated, Screen v2 Steps 1–6 done (Step 6/9)
+- **Current phase**: Phase 4 **COMPLETE** — Interpretator ✅ Conceptualizator ✅ Screen v2 ✅ (Steps 1–9 done); next: Simulator (Phase 4 tail) or Phase 5
 
 ---
 
@@ -35,7 +35,8 @@ psycheos-production/
 │   │   ├── pro.py               # Pro bot handler (Phase 2 — full implementation)
 │   │   ├── interpretator.py     # Interpretator bot (Phase 4 ✅ migrated)
 │   │   ├── conceptualizator.py  # Conceptualizator bot (Phase 4 ✅ migrated)
-│   │   └── stubs.py             # Screen/Simulator (stubs)
+│   │   ├── screen.py            # Screen v2 bot — full FSM handler ✅
+│   │   └── stubs.py             # Simulator (stub)
 │   ├── services/
 │   │   ├── interpreter/         # Interpreter service modules
 │   │   ├── conceptualizer/      # Conceptualizer service modules
@@ -70,7 +71,7 @@ psycheos-production/
 | Bot ID            | Role                  | Status       | Handler file      |
 |-------------------|-----------------------|--------------|-------------------|
 | `pro`             | Specialist management | Phase 2 done       | `webhooks/pro.py`             |
-| `screen`          | Client-facing         | Stub (Phase 4)     | `webhooks/stubs.py`           |
+| `screen`          | Client-facing         | **Phase 4 ✅ done** | `webhooks/screen.py`          |
 | `interpretator`   | AI diagnostic tool    | **Phase 4 ✅ done** | `webhooks/interpretator.py`  |
 | `conceptualizator`| Conceptualization     | **Phase 4 ✅ done** | `webhooks/conceptualizator.py` |
 | `simulator`       | Simulation            | Phase 4 next       | `webhooks/stubs.py`           |
@@ -313,7 +314,7 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 | 1     | Project skeleton, DB schema, webhook pipeline                                      | Done            |
 | 2     | Pro bot: invite-only registration, cases, admin panel                              | Done            |
 | 3     | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | **Done**        |
-| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **In progress** (Interpretator ✅ Conceptualizator ✅ Screen v2 Step 6/9 ✅) |
+| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **Done** (Interpretator ✅ Conceptualizator ✅ Screen v2 ✅; Simulator pending) |
 | 5     | Claude AI integration for analysis tools                                           | Planned         |
 | 6     | Client-side (Screen bot) session flow                                              | Planned         |
 | 7     | Billing (Telegram Stars)                                                           | Planned         |
@@ -335,7 +336,7 @@ No authentication required. Used by Railway for healthchecks.
 | Бот              | Статус                    | Примечание                                                                                                    |
 |------------------|---------------------------|---------------------------------------------------------------------------------------------------------------|
 | Pro              | Требует v2                | Центральный хаб: регистрация, оплата, выход на остальные боты (tool-боты), ИИ-справочник по системе. Текущая версия не адаптирована под продакшн |
-| Screen           | 🔄 Screen v2 Step 6/9     | Steps 1–6 ✅ Далее: webhooks/screen.py (Step 7)                                                            |
+| Screen           | ✅ Screen v2 DONE (Phase 4) | Steps 1–9 ✅ `app/webhooks/screen.py` + Pro v2a расширение                                                |
 | Interpreter      | ✅ Мигрирован (Phase 4)   | `app/webhooks/interpretator.py`; оригинал: `./psycheos-interpreter`                                          |
 | Conceptualizer   | ✅ Мигрирован (Phase 4)   | `app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`; оригинал: `./psycheos-conceptualizer`  |
 | Simulator        | Следующий               | Оригинал ожидается в `./psycheos-simulator`                                                                  |
@@ -346,18 +347,17 @@ No authentication required. Used by Railway for healthchecks.
 
 1. ✅ Interpreter — мигрирован (`app/webhooks/interpretator.py`)
 2. ✅ Conceptualizer — мигрирован (`app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`)
-3. 🔄 Screen v2 — в процессе:
+3. ✅ Screen v2 — ЗАВЕРШЁН:
    - ✅ Step 1: DB model `screening_assessment`
    - ✅ Step 2: `app/services/screen/engine.py` — ScreeningEngine (31 тест, 31 pass)
    - ✅ Step 3: `weight_matrix.py` (6 экранов, 20 узлов) + `screen_bank.py`
    - ✅ Step 4: `prompts.py` — 5 Claude промптов + `assemble_prompt()`
    - ✅ Step 5: `orchestrator.py` — ScreenOrchestrator (3 фазы, Claude routing, stop decision)
    - ✅ Step 6: `report.py` — generate_full_report / format_report_txt / generate_report_docx
-   - ⬜ Step 7: `webhooks/screen.py`
-   - ⬜ Step 8: Pro v2 расширение
-   - ⬜ Step 9: интеграция
+   - ✅ Step 7: `webhooks/screen.py` — полный FSM-обработчик клиентского бота
+   - ✅ Step 8: `webhooks/pro.py` — screen_menu/create/results коллбэки; кнопка «📊 Скрининг»
+   - ✅ Step 9: `main.py` + `models/__init__.py` — интеграция Screen v2
 4. ⬜ Simulator — следующий (`./psycheos-simulator`, ожидается загрузка)
-5. ⬜ Pro v2 — зависит от Screen v2
 
 ---
 
@@ -374,6 +374,8 @@ No authentication required. Used by Railway for healthchecks.
 - **Callback pattern в Pro:** `launch_{service_id}_{context_id}` (split по `_` с maxsplit=2, UUID без изменений)
 - **run_id в FSM:** после успешного verify сохраняется в `BotChatState.state_payload["run_id"]`; `context_id` — в `BotChatState.context_id`
 - **subject_id=0:** открытый токен для клиентского Screen — telegram_id клиента неизвестен в момент выдачи; `verify_link` пропускает проверку subject_id если `token.subject_id == 0`
-- **Callback для клиентской ссылки:** `screen_link_{context_id}` (отдельный паттерн от `launch_`, т.к. разные role и subject_id)
+- **Screen v2 callback pattern в Pro:** `screen_menu_{context_id}` → статус + кнопки; `screen_create_{context_id}` → создать ScreeningAssessment + token; `screen_results_{assessment_id}` → отправить txt/json/docx
+- **Screen FSM states:** `idle/None` → `/start {jti}` → verify token + load assessment; `active` → start_screening; `phase1/phase2/phase3` → toggle_{i} + confirm_selection; `completed` → финал
+- **specialist_user_id в ScreeningAssessment:** Telegram ID специалиста (BigInteger), используется для уведомления через Pro-бота при завершении скрининга
 - **Хранение сессии в tool-ботах:** Redis отсутствует; полное состояние сессии (Pydantic-модель) сериализуется в `state_payload["session"]` через `model.model_dump(mode="json")` и восстанавливается через `Model.model_validate(data)`. `bot_chat_state.state` дублирует `session.state.value` для маршрутизации без десериализации
 - **Pydantic v2:** все сервисные модели (`app/services/*/models.py`) используют Pydantic v2 API (`model_dump`, `model_validate`). Совместимость v1-стиля (`class Config`) в оригинальных ботах не переносится

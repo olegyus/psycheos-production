@@ -10,6 +10,8 @@ Flows:
 - case_{id} → case view with tool launch buttons
 - launch_{service_id}_{context_id} → issue link token → deep link
 """
+import io
+import json
 import logging
 import secrets
 import uuid
@@ -26,7 +28,9 @@ from app.models.bot_chat_state import BotChatState
 from app.models.user import User
 from app.models.invite import Invite
 from app.models.context import Context
+from app.models.screening_assessment import ScreeningAssessment
 from app.services.links import issue_link
+from app.services.screen.report import format_report_txt, generate_report_docx
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +123,7 @@ def case_tools_kb(context_id: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🧠 Интерпретатор",    callback_data=f"launch_interpretator_{context_id}")],
         [InlineKeyboardButton("💡 Концептуализатор", callback_data=f"launch_conceptualizator_{context_id}")],
         [InlineKeyboardButton("🎭 Симулятор",        callback_data=f"launch_simulator_{context_id}")],
-        [InlineKeyboardButton("📤 Ссылка для клиента", callback_data=f"screen_link_{context_id}")],
+        [InlineKeyboardButton("📊 Скрининг",           callback_data=f"screen_menu_{context_id}")],
         [InlineKeyboardButton("◀️ Мои кейсы",       callback_data="cases_list")],
     ])
 
@@ -329,9 +333,19 @@ async def handle_callback(
         await handle_launch_tool(query, bot, db, chat_id, user_id, service_id, context_id_str)
         return
 
-    if data.startswith("screen_link_"):
-        context_id_str = data[len("screen_link_"):]
-        await handle_screen_link(query, bot, db, chat_id, context_id_str)
+    if data.startswith("screen_menu_"):
+        context_id_str = data[len("screen_menu_"):]
+        await handle_screen_menu(query, bot, db, chat_id, context_id_str)
+        return
+
+    if data.startswith("screen_create_"):
+        context_id_str = data[len("screen_create_"):]
+        await handle_screen_create(query, bot, db, chat_id, user_id, context_id_str)
+        return
+
+    if data.startswith("screen_results_"):
+        assessment_id_str = data[len("screen_results_"):]
+        await handle_screen_results(query, bot, db, chat_id, assessment_id_str)
         return
 
     # ── Admin callbacks ──
@@ -407,8 +421,57 @@ _TOOL_LABELS = {
 }
 
 
-async def handle_screen_link(query, bot, db, chat_id, context_id_str):
-    """Issue an open client token for Screen and send the link to the specialist."""
+async def handle_screen_menu(query, bot, db, chat_id, context_id_str):
+    """Show Screen v2 status and action buttons for a case."""
+    try:
+        context_id = uuid.UUID(context_id_str)
+    except ValueError:
+        await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
+        return
+
+    result = await db.execute(
+        select(ScreeningAssessment)
+        .where(ScreeningAssessment.context_id == context_id)
+        .order_by(ScreeningAssessment.created_at.desc())
+        .limit(1)
+    )
+    assessment = result.scalar_one_or_none()
+
+    if not assessment:
+        status_text = "Скрининг ещё не проводился."
+        buttons = [
+            [InlineKeyboardButton("🚀 Создать скрининг", callback_data=f"screen_create_{context_id_str}")],
+            [InlineKeyboardButton("◀️ Назад", callback_data=f"case_{context_id_str}")],
+        ]
+    elif assessment.status == "completed":
+        date_str = assessment.completed_at.strftime("%d.%m.%Y") if assessment.completed_at else "—"
+        status_text = f"✅ Скрининг завершён\nДата: {date_str}"
+        buttons = [
+            [InlineKeyboardButton("📄 Результаты", callback_data=f"screen_results_{assessment.id}")],
+            [InlineKeyboardButton("🔄 Новый скрининг", callback_data=f"screen_create_{context_id_str}")],
+            [InlineKeyboardButton("◀️ Назад", callback_data=f"case_{context_id_str}")],
+        ]
+    elif assessment.status == "in_progress":
+        status_text = f"🔄 Скрининг в процессе (Фаза {assessment.phase})"
+        buttons = [
+            [InlineKeyboardButton("◀️ Назад", callback_data=f"case_{context_id_str}")],
+        ]
+    else:
+        status_text = "📋 Скрининг создан, ожидает клиента."
+        buttons = [
+            [InlineKeyboardButton("🔄 Новый скрининг", callback_data=f"screen_create_{context_id_str}")],
+            [InlineKeyboardButton("◀️ Назад", callback_data=f"case_{context_id_str}")],
+        ]
+
+    await query.edit_message_text(
+        text=f"📊 *Скрининг*\n\n{status_text}",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="Markdown",
+    )
+
+
+async def handle_screen_create(query, bot, db, chat_id, user_id, context_id_str):
+    """Create a new ScreeningAssessment + issue an open client LinkToken."""
     username = settings.tool_bot_usernames.get("screen", "")
     if not username:
         await query.answer("Screen не настроен. Обратитесь к администратору.", show_alert=True)
@@ -420,7 +483,15 @@ async def handle_screen_link(query, bot, db, chat_id, context_id_str):
         await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
         return
 
-    # subject_id=0 — open token: client's Telegram ID is unknown at issue time
+    assessment = ScreeningAssessment(
+        context_id=context_id,
+        specialist_user_id=user_id,
+        status="created",
+    )
+    db.add(assessment)
+    await db.flush()  # populate assessment.id
+
+    # subject_id=0 — open token: client's Telegram ID unknown at issue time
     token = await issue_link(
         db,
         service_id="screen",
@@ -429,19 +500,72 @@ async def handle_screen_link(query, bot, db, chat_id, context_id_str):
         subject_id=0,
     )
 
+    assessment.link_token_jti = token.jti
+    await db.flush()
+
     deep_link = f"https://t.me/{username}?start={token.jti}"
 
-    await bot.send_message(
-        chat_id=chat_id,
-        text=f"📤 *Ссылка для клиента (Screen)*\n\n"
-             f"Отправьте клиенту эту ссылку:\n`{deep_link}`\n\n"
-             f"_Пропуск действует 24 часа._",
+    await query.edit_message_text(
+        text=(
+            f"✅ *Скрининг создан*\n\n"
+            f"Отправьте клиенту ссылку:\n`{deep_link}`\n\n"
+            f"_Ссылка действует 24 часа._"
+        ),
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("▶️ Открыть Screen", url=deep_link)],
+            [InlineKeyboardButton("◀️ Назад к кейсу", callback_data=f"case_{context_id_str}")],
         ]),
         parse_mode="Markdown",
     )
+
+
+async def handle_screen_results(query, bot, db, chat_id, assessment_id_str):
+    """Send the completed screening report as txt, json, and docx files."""
+    try:
+        assessment_id = uuid.UUID(assessment_id_str)
+    except ValueError:
+        await query.answer("Ошибка: неверный ID.", show_alert=True)
+        return
+
+    result = await db.execute(
+        select(ScreeningAssessment).where(ScreeningAssessment.id == assessment_id)
+    )
+    assessment = result.scalar_one_or_none()
+
+    if not assessment or not assessment.report_json:
+        await query.answer("Результаты недоступны.", show_alert=True)
+        return
+
+    report_json = assessment.report_json
+    report_text = assessment.report_text or format_report_txt(report_json)
+
     await query.answer()
+
+    # Plain-text preview (≤4000 chars to stay within Telegram limit)
+    preview = report_text[:4000]
+    await bot.send_message(
+        chat_id=chat_id,
+        text=f"```\n{preview}\n```",
+        parse_mode="Markdown",
+    )
+
+    # JSON file
+    json_bytes = json.dumps(report_json, ensure_ascii=False, indent=2).encode("utf-8")
+    await bot.send_document(
+        chat_id=chat_id,
+        document=io.BytesIO(json_bytes),
+        filename="screening_report.json",
+        caption="Отчёт в формате JSON",
+    )
+
+    # DOCX file
+    docx_bytes = await generate_report_docx(report_json)
+    await bot.send_document(
+        chat_id=chat_id,
+        document=io.BytesIO(docx_bytes),
+        filename="screening_report.docx",
+        caption="Отчёт в формате DOCX",
+    )
 
 
 async def handle_launch_tool(query, bot, db, chat_id, user_id, service_id, context_id_str):
