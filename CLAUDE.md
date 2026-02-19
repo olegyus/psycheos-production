@@ -10,7 +10,7 @@ PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for 
 - **AI**: Anthropic Claude API (integrated in future phases)
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
-- **Current phase**: Phase 4 in progress — Interpretator + Conceptualizator migrated (2/4 tool bots done)
+- **Current phase**: Phase 4 in progress — Interpretator + Conceptualizator migrated, Screen v2 engine done (Step 2/9)
 
 ---
 
@@ -37,16 +37,21 @@ psycheos-production/
 │   │   └── stubs.py             # Screen/Simulator (stubs)
 │   ├── services/
 │   │   ├── interpreter/         # Interpreter service modules
-│   │   └── conceptualizer/      # Conceptualizer service modules
-│   │       ├── enums.py         #   SessionStateEnum, HypothesisType, PsycheLevelEnum, …
-│   │       ├── models.py        #   Pydantic v2: SessionState, Hypothesis, LayerA/B/C, …
-│   │       ├── decision_policy.py #  PriorityChecker + QuestionGenerator + selector
-│   │       ├── analysis.py      #   Async hypothesis extraction via Claude
-│   │       └── output.py        #   Async three-layer output assembly via Claude
+│   │   ├── conceptualizer/      # Conceptualizer service modules
+│   │   │   ├── enums.py         #   SessionStateEnum, HypothesisType, PsycheLevelEnum, …
+│   │   │   ├── models.py        #   Pydantic v2: SessionState, Hypothesis, LayerA/B/C, …
+│   │   │   ├── decision_policy.py #  PriorityChecker + QuestionGenerator + selector
+│   │   │   ├── analysis.py      #   Async hypothesis extraction via Claude
+│   │   │   └── output.py        #   Async three-layer output assembly via Claude
+│   │   └── screen/              # Screen v2 service modules
+│   │       └── engine.py        #   ScreeningEngine: vector aggregation, tension matrix, rigidity, confidence ✅
 │   └── utils/
 │       └── idempotency.py    # Idempotency key builder (format from Dev Spec Appendix C)
 ├── scripts/
 │   └── set_webhooks.py       # One-shot script to register webhooks with Telegram API
+├── tests/
+│   ├── __init__.py
+│   └── test_engine.py        # 31 unit tests for ScreeningEngine ✅
 ├── Procfile                  # Railway: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
 ├── requirements.txt
 └── .gitignore
@@ -302,7 +307,7 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 | 1     | Project skeleton, DB schema, webhook pipeline                                      | Done            |
 | 2     | Pro bot: invite-only registration, cases, admin panel                              | Done            |
 | 3     | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | **Done**        |
-| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **In progress** (2/4 done: Interpretator ✅ Conceptualizator ✅) |
+| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **In progress** (Interpretator ✅ Conceptualizator ✅ Screen v2 Step 2/9 ✅) |
 | 5     | Claude AI integration for analysis tools                                           | Planned         |
 | 6     | Client-side (Screen bot) session flow                                              | Planned         |
 | 7     | Billing (Telegram Stars)                                                           | Planned         |
@@ -324,7 +329,7 @@ No authentication required. Used by Railway for healthchecks.
 | Бот              | Статус                    | Примечание                                                                                                    |
 |------------------|---------------------------|---------------------------------------------------------------------------------------------------------------|
 | Pro              | Требует v2                | Центральный хаб: регистрация, оплата, выход на остальные боты (tool-боты), ИИ-справочник по системе. Текущая версия не адаптирована под продакшн |
-| Screen           | Требует v2                | Поменялся банк вопросов, шкалы и логика работы. Нужна переделка                                              |
+| Screen           | 🔄 Screen v2 Step 2/9     | Step 1 (DB model) ✅ Step 2 (engine.py + 31 tests) ✅ Далее: screen_bank.py, prompts, orchestrator          |
 | Interpreter      | ✅ Мигрирован (Phase 4)   | `app/webhooks/interpretator.py`; оригинал: `./psycheos-interpreter`                                          |
 | Conceptualizer   | ✅ Мигрирован (Phase 4)   | `app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`; оригинал: `./psycheos-conceptualizer`  |
 | Simulator        | Следующий               | Оригинал ожидается в `./psycheos-simulator`                                                                  |
@@ -335,9 +340,18 @@ No authentication required. Used by Railway for healthchecks.
 
 1. ✅ Interpreter — мигрирован (`app/webhooks/interpretator.py`)
 2. ✅ Conceptualizer — мигрирован (`app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`)
-3. 🔄 Simulator — следующий (`./psycheos-simulator`, ожидается загрузка)
-4. ⬜ Screen v2 — новый банк вопросов + логика
-5. ⬜ Pro v2 — зависит от всех остальных ботов
+3. 🔄 Screen v2 — в процессе:
+   - ✅ Step 1: DB model `screening_assessment`
+   - ✅ Step 2: `app/services/screen/engine.py` — ScreeningEngine (31 тест, 31 pass)
+   - ⬜ Step 3: `screen_bank.py` + `weight_matrix.py`
+   - ⬜ Step 4: `prompts.py`
+   - ⬜ Step 5: `orchestrator.py`
+   - ⬜ Step 6: `report.py`
+   - ⬜ Step 7: `webhooks/screen.py`
+   - ⬜ Step 8: Pro v2 расширение
+   - ⬜ Step 9: интеграция
+4. ⬜ Simulator — следующий (`./psycheos-simulator`, ожидается загрузка)
+5. ⬜ Pro v2 — зависит от Screen v2
 
 ---
 
