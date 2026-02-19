@@ -10,7 +10,7 @@ PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for 
 - **AI**: Anthropic Claude API (integrated in future phases)
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
-- **Current phase**: Phase 4 in progress — Interpretator + Conceptualizator migrated, Screen v2 engine done (Step 2/9)
+- **Current phase**: Phase 4 in progress — Interpretator + Conceptualizator migrated, Screen v2 Steps 1–4 done (Step 4/9)
 
 ---
 
@@ -44,7 +44,10 @@ psycheos-production/
 │   │   │   ├── analysis.py      #   Async hypothesis extraction via Claude
 │   │   │   └── output.py        #   Async three-layer output assembly via Claude
 │   │   └── screen/              # Screen v2 service modules
-│   │       └── engine.py        #   ScreeningEngine: vector aggregation, tension matrix, rigidity, confidence ✅
+│   │       ├── engine.py        #   ScreeningEngine: vector aggregation, tension matrix, rigidity, confidence ✅
+│   │       ├── weight_matrix.py #   PHASE1_SCREENS (6) + PHASE2_TEMPLATES (20 nodes) with axis/layer weights ✅
+│   │       ├── screen_bank.py   #   get_phase1_screen / get_phase2_template / get_all_phase2_nodes ✅
+│   │       └── prompts.py       #   5 Claude prompts + assemble_prompt() ✅
 │   └── utils/
 │       └── idempotency.py    # Idempotency key builder (format from Dev Spec Appendix C)
 ├── scripts/
@@ -307,7 +310,7 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 | 1     | Project skeleton, DB schema, webhook pipeline                                      | Done            |
 | 2     | Pro bot: invite-only registration, cases, admin panel                              | Done            |
 | 3     | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | **Done**        |
-| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **In progress** (Interpretator ✅ Conceptualizator ✅ Screen v2 Step 2/9 ✅) |
+| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **In progress** (Interpretator ✅ Conceptualizator ✅ Screen v2 Step 4/9 ✅) |
 | 5     | Claude AI integration for analysis tools                                           | Planned         |
 | 6     | Client-side (Screen bot) session flow                                              | Planned         |
 | 7     | Billing (Telegram Stars)                                                           | Planned         |
@@ -329,7 +332,7 @@ No authentication required. Used by Railway for healthchecks.
 | Бот              | Статус                    | Примечание                                                                                                    |
 |------------------|---------------------------|---------------------------------------------------------------------------------------------------------------|
 | Pro              | Требует v2                | Центральный хаб: регистрация, оплата, выход на остальные боты (tool-боты), ИИ-справочник по системе. Текущая версия не адаптирована под продакшн |
-| Screen           | 🔄 Screen v2 Step 2/9     | Step 1 (DB model) ✅ Step 2 (engine.py + 31 tests) ✅ Далее: screen_bank.py, prompts, orchestrator          |
+| Screen           | 🔄 Screen v2 Step 4/9     | Steps 1–4 ✅ Далее: orchestrator.py (Step 5)                                                               |
 | Interpreter      | ✅ Мигрирован (Phase 4)   | `app/webhooks/interpretator.py`; оригинал: `./psycheos-interpreter`                                          |
 | Conceptualizer   | ✅ Мигрирован (Phase 4)   | `app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`; оригинал: `./psycheos-conceptualizer`  |
 | Simulator        | Следующий               | Оригинал ожидается в `./psycheos-simulator`                                                                  |
@@ -343,8 +346,8 @@ No authentication required. Used by Railway for healthchecks.
 3. 🔄 Screen v2 — в процессе:
    - ✅ Step 1: DB model `screening_assessment`
    - ✅ Step 2: `app/services/screen/engine.py` — ScreeningEngine (31 тест, 31 pass)
-   - ⬜ Step 3: `screen_bank.py` + `weight_matrix.py`
-   - ⬜ Step 4: `prompts.py`
+   - ✅ Step 3: `weight_matrix.py` (6 экранов, 20 узлов) + `screen_bank.py`
+   - ✅ Step 4: `prompts.py` — 5 Claude промптов + `assemble_prompt()`
    - ⬜ Step 5: `orchestrator.py`
    - ⬜ Step 6: `report.py`
    - ⬜ Step 7: `webhooks/screen.py`
