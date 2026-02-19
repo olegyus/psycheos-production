@@ -10,7 +10,7 @@ PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for 
 - **AI**: Anthropic Claude API (integrated in future phases)
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
-- **Current phase**: Phase 4 in progress — Interpretator + Conceptualizator migrated, Screen v2 Steps 1–4 done (Step 4/9)
+- **Current phase**: Phase 4 in progress — Interpretator + Conceptualizator migrated, Screen v2 Steps 1–6 done (Step 6/9)
 
 ---
 
@@ -23,11 +23,12 @@ psycheos-production/
 │   ├── config.py             # All settings via pydantic-settings (env vars)
 │   ├── database.py           # Async SQLAlchemy engine + session factory
 │   ├── models/
-│   │   ├── user.py           # User (specialist/client) — table: users
-│   │   ├── invite.py         # Invite tokens — table: invites
-│   │   ├── context.py        # Case/client context — table: contexts
-│   │   ├── bot_chat_state.py # FSM state per (bot, chat) — table: bot_chat_state
-│   │   └── telegram_dedup.py # Dedup table — table: telegram_update_dedup
+│   │   ├── user.py                    # User (specialist/client) — table: users
+│   │   ├── invite.py                  # Invite tokens — table: invites
+│   │   ├── context.py                 # Case/client context — table: contexts
+│   │   ├── bot_chat_state.py          # FSM state per (bot, chat) — table: bot_chat_state
+│   │   ├── telegram_dedup.py          # Dedup table — table: telegram_update_dedup
+│   │   └── screening_assessment.py    # Screen v2 assessment — table: screening_assessment ✅
 │   ├── webhooks/
 │   │   ├── router_factory.py    # Generic webhook router factory (shared pipeline)
 │   │   ├── common.py            # Shared logic: secret verify, dedup, FSM load/save
@@ -47,7 +48,9 @@ psycheos-production/
 │   │       ├── engine.py        #   ScreeningEngine: vector aggregation, tension matrix, rigidity, confidence ✅
 │   │       ├── weight_matrix.py #   PHASE1_SCREENS (6) + PHASE2_TEMPLATES (20 nodes) with axis/layer weights ✅
 │   │       ├── screen_bank.py   #   get_phase1_screen / get_phase2_template / get_all_phase2_nodes ✅
-│   │       └── prompts.py       #   5 Claude prompts + assemble_prompt() ✅
+│   │       ├── prompts.py       #   5 Claude prompts + assemble_prompt() ✅
+│   │       ├── orchestrator.py  #   ScreenOrchestrator: 3-phase flow, Claude routing, stop decision ✅
+│   │       └── report.py        #   generate_full_report / format_report_txt / generate_report_docx ✅
 │   └── utils/
 │       └── idempotency.py    # Idempotency key builder (format from Dev Spec Appendix C)
 ├── scripts/
@@ -310,7 +313,7 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 | 1     | Project skeleton, DB schema, webhook pipeline                                      | Done            |
 | 2     | Pro bot: invite-only registration, cases, admin panel                              | Done            |
 | 3     | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | **Done**        |
-| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **In progress** (Interpretator ✅ Conceptualizator ✅ Screen v2 Step 4/9 ✅) |
+| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **In progress** (Interpretator ✅ Conceptualizator ✅ Screen v2 Step 6/9 ✅) |
 | 5     | Claude AI integration for analysis tools                                           | Planned         |
 | 6     | Client-side (Screen bot) session flow                                              | Planned         |
 | 7     | Billing (Telegram Stars)                                                           | Planned         |
@@ -332,7 +335,7 @@ No authentication required. Used by Railway for healthchecks.
 | Бот              | Статус                    | Примечание                                                                                                    |
 |------------------|---------------------------|---------------------------------------------------------------------------------------------------------------|
 | Pro              | Требует v2                | Центральный хаб: регистрация, оплата, выход на остальные боты (tool-боты), ИИ-справочник по системе. Текущая версия не адаптирована под продакшн |
-| Screen           | 🔄 Screen v2 Step 4/9     | Steps 1–4 ✅ Далее: orchestrator.py (Step 5)                                                               |
+| Screen           | 🔄 Screen v2 Step 6/9     | Steps 1–6 ✅ Далее: webhooks/screen.py (Step 7)                                                            |
 | Interpreter      | ✅ Мигрирован (Phase 4)   | `app/webhooks/interpretator.py`; оригинал: `./psycheos-interpreter`                                          |
 | Conceptualizer   | ✅ Мигрирован (Phase 4)   | `app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`; оригинал: `./psycheos-conceptualizer`  |
 | Simulator        | Следующий               | Оригинал ожидается в `./psycheos-simulator`                                                                  |
@@ -348,8 +351,8 @@ No authentication required. Used by Railway for healthchecks.
    - ✅ Step 2: `app/services/screen/engine.py` — ScreeningEngine (31 тест, 31 pass)
    - ✅ Step 3: `weight_matrix.py` (6 экранов, 20 узлов) + `screen_bank.py`
    - ✅ Step 4: `prompts.py` — 5 Claude промптов + `assemble_prompt()`
-   - ⬜ Step 5: `orchestrator.py`
-   - ⬜ Step 6: `report.py`
+   - ✅ Step 5: `orchestrator.py` — ScreenOrchestrator (3 фазы, Claude routing, stop decision)
+   - ✅ Step 6: `report.py` — generate_full_report / format_report_txt / generate_report_docx
    - ⬜ Step 7: `webhooks/screen.py`
    - ⬜ Step 8: Pro v2 расширение
    - ⬜ Step 9: интеграция
