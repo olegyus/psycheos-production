@@ -1,0 +1,10 @@
+cd ~/Рабочий\ стол/psycheos-backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 8000
+
+# Pro Bot
+cd ~/Рабочий\ стол/psycheos-backend && source .venv/bin/activate && python bots/pro_bot.py
+
+# Client Bot
+cd ~/Рабочий\ стол/psycheos-backend && source .venv/bin/activate && python bots/client_bot.py
+
+# Pro Interpreter
+cd ~/Рабочий\ стол/psycheos-interpreter && source .venv/bin/activate && python interpreter_bot.py

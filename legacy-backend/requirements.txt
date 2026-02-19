@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+aiogram
+anthropic
+httpx
+structlog
+pydantic
+pydantic-settings
+python-dateutil
+aiosqlite
+
