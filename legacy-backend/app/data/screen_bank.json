@@ -1,0 +1,416 @@
+{
+  "metadata": {
+    "version": "2.0",
+    "created": "2026-02-05",
+    "description": "PsycheOS Screen Bank v2 - 25 экранов для Screening Bot",
+    "total_screens": 25,
+    "blocks": [
+      {"id": "B0", "name": "context", "title": "Вход и общий контекст жизни", "screens": 5},
+      {"id": "B1", "name": "economy_exploration", "title": "Экономия ↔ Исследование", "screens": 5},
+      {"id": "B2", "name": "protection_contact", "title": "Защита ↔ Контакт", "screens": 5},
+      {"id": "B3", "name": "retention_movement", "title": "Удержание ↔ Движение", "screens": 5},
+      {"id": "B4", "name": "survival_development", "title": "Выживание ↔ Развитие", "screens": 5}
+    ]
+  },
+  "screens": [
+    {
+      "screen_id": "B0_01",
+      "block": "context",
+      "continuum": null,
+      "screen_type": "info",
+      "stimulus": {
+        "text": "Ниже будут короткие вопросы о том, как сейчас вы воспринимаете свою жизнь.\n\nЗдесь нет правильных или неправильных ответов — важно то, как обычно происходит в последнее время.\n\nОтвечайте, не задумываясь слишком долго."
+      },
+      "response_format": {
+        "type": "info"
+      }
+    },
+    {
+      "screen_id": "B0_02",
+      "block": "context",
+      "continuum": null,
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "Как в последнее время вам живётся?"
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Очень тяжело",
+        "right_anchor": "Очень легко",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B0_03",
+      "block": "context",
+      "continuum": null,
+      "screen_type": "multi_choice",
+      "stimulus": {
+        "question": "Что на данный момент вызывает ощущение тяжести или напряжения?"
+      },
+      "response_format": {
+        "type": "multi_choice",
+        "options": [
+          "работа / учёба",
+          "деньги / быт",
+          "отношения с близкими",
+          "отношения с людьми в целом",
+          "решения и выборы",
+          "мысли о будущем",
+          "тело / здоровье",
+          "трудно выделить что-то одно"
+        ]
+      }
+    },
+    {
+      "screen_id": "B0_04",
+      "block": "context",
+      "continuum": null,
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "Как вы сейчас ощущаете течение своей жизни?"
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Застой, «болото»",
+        "right_anchor": "Быстрый поток, «горная река»",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B0_05",
+      "block": "context",
+      "continuum": null,
+      "screen_type": "slider",
+      "stimulus": {
+        "statement": "В последнее время моя жизнь кажется хаотичной",
+        "question": "Насколько это про вас?"
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Это точно про меня",
+        "right_anchor": "Совсем не про меня",
+        "scale": [0, 10]
+      }
+    },
+
+    {
+      "screen_id": "B1_01",
+      "block": "economy_exploration",
+      "continuum": "economy_exploration",
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "Когда в жизни появляется что-то новое или непривычное, я как правило..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Стараюсь держаться привычного и проверенного",
+        "right_anchor": "С интересом пробую и разбираюсь",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B1_02",
+      "block": "economy_exploration",
+      "continuum": "economy_exploration",
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "Если заранее непонятно, чем всё закончится, я чаще..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Стараюсь не ввязываться",
+        "right_anchor": "Иду смотреть, что из этого выйдет",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B1_03",
+      "block": "economy_exploration",
+      "continuum": "economy_exploration",
+      "screen_type": "slider",
+      "is_key_screen": true,
+      "stimulus": {
+        "question": "В последнее время мне всё чаще хочется..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Закрыться в «ракушку»",
+        "right_anchor": "Изучать и пробовать новое",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B1_04",
+      "block": "economy_exploration",
+      "continuum": "economy_exploration",
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "Когда в жизни становится больше задач или напряжения, я скорее..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Стараюсь упростить и сократить всё возможное",
+        "right_anchor": "Ищу новые способы справляться и пробую другое",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B1_05",
+      "block": "economy_exploration",
+      "continuum": "economy_exploration",
+      "screen_type": "single_choice",
+      "stimulus": {
+        "situation": "Представьте, что у вас появляется возможность попробовать что-то новое (новый формат работы, новое знакомство, новое занятие), но нет гарантии, что это окажется удачной идеей.",
+        "question": "Как бы вы поступили на данный момент?"
+      },
+      "response_format": {
+        "type": "single_choice",
+        "options": [
+          "Скорее откажусь — сейчас не лучшее время",
+          "Подумаю, но, скорее всего, не возьмусь",
+          "Попробую осторожно",
+          "С интересом попробую"
+        ]
+      }
+    },
+
+    {
+      "screen_id": "B2_01",
+      "block": "protection_contact",
+      "continuum": "protection_contact",
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "В общении с людьми я обычно..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Держусь настороженно и на расстоянии",
+        "right_anchor": "Достаточно открыт(а) и легко иду на контакт",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B2_02",
+      "block": "protection_contact",
+      "continuum": "protection_contact",
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "Когда в общении возникает напряжение или недопонимание, я скорее..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Закрываюсь и стараюсь дистанцироваться",
+        "right_anchor": "Стараюсь прояснять и оставаться в контакте",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B2_03",
+      "block": "protection_contact",
+      "continuum": "protection_contact",
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "В целом мне сейчас проще..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Держать свои переживания при себе",
+        "right_anchor": "Делиться с другими тем, что со мной происходит",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B2_04",
+      "block": "protection_contact",
+      "continuum": "protection_contact",
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "Когда мне сложно или больно, я чаще..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Стараюсь справляться сам(а) и не показывать это",
+        "right_anchor": "Ищу поддержки у других",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B2_05",
+      "block": "protection_contact",
+      "continuum": "protection_contact",
+      "screen_type": "single_choice",
+      "stimulus": {
+        "situation": "Представьте, что вы переживаете что-то важное, но не уверены, как вас поймут или отреагируют другие.",
+        "question": "Как бы вы поступили на данный момент?"
+      },
+      "response_format": {
+        "type": "single_choice",
+        "options": [
+          "Не буду это показывать",
+          "Поделюсь с кем-то, но очень осторожно",
+          "Расскажу близкому человеку",
+          "Спокойно обсужу это с теми, кому доверяю"
+        ]
+      }
+    },
+
+    {
+      "screen_id": "B3_01",
+      "block": "retention_movement",
+      "continuum": "retention_movement",
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "Когда в жизни назревают изменения, я чаще..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Стараюсь сохранять всё как есть",
+        "right_anchor": "Чувствую потребность двигаться дальше и менять",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B3_02",
+      "block": "retention_movement",
+      "continuum": "retention_movement",
+      "screen_type": "slider",
+      "is_key_screen": true,
+      "stimulus": {
+        "question": "Если что-то перестаёт работать или радовать, мне обычно..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Сложно это отпустить",
+        "right_anchor": "Относительно легко с этим расставаться",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B3_03",
+      "block": "retention_movement",
+      "continuum": "retention_movement",
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "В последнее время я чаще ощущаю, что..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Застрял(а) и топчусь на месте",
+        "right_anchor": "Нахожусь в постоянном движении",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B3_04",
+      "block": "retention_movement",
+      "continuum": "retention_movement",
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "Когда нужно сделать следующий шаг, я скорее..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Долго размышляю",
+        "right_anchor": "Перехожу сразу к действию",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B3_05",
+      "block": "retention_movement",
+      "continuum": "retention_movement",
+      "screen_type": "single_choice",
+      "stimulus": {
+        "situation": "Представьте ситуацию, когда вы понимаете, что текущая ситуация больше не подходит (работа, формат жизни, отношения, способ действовать), но следующий шаг пока не совсем ясен.",
+        "question": "Как вы обычно поступаете в таких случаях?"
+      },
+      "response_format": {
+        "type": "single_choice",
+        "options": [
+          "Предпочитаю подождать и ничего не менять",
+          "Долго взвешиваю и откладываю решение",
+          "Начинаю делать небольшие шаги",
+          "Решаюсь на изменения и двигаюсь дальше"
+        ]
+      }
+    },
+
+    {
+      "screen_id": "B4_01",
+      "block": "survival_development",
+      "continuum": "survival_development",
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "Если говорить в целом, то сейчас моя жизнь больше про то, как..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Справляться и выдерживать",
+        "right_anchor": "Развиваться и расширять возможности",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B4_02",
+      "block": "survival_development",
+      "continuum": "survival_development",
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "Большая часть моих усилий сейчас уходит на то, чтобы..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Удерживать стабильность",
+        "right_anchor": "Пробовать что-то новое",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B4_03",
+      "block": "survival_development",
+      "continuum": "survival_development",
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "Думая о будущем, я сейчас скорее..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Сосредоточен(а) на том, чтобы не стало хуже",
+        "right_anchor": "Думаю о том, как может стать лучше",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B4_04",
+      "block": "survival_development",
+      "continuum": "survival_development",
+      "screen_type": "slider",
+      "stimulus": {
+        "question": "Внутренне я сейчас ощущаю себя больше в режиме..."
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Напряжения и осторожности",
+        "right_anchor": "Интереса и открытости",
+        "scale": [0, 10]
+      }
+    },
+    {
+      "screen_id": "B4_05",
+      "block": "survival_development",
+      "continuum": "survival_development",
+      "screen_type": "slider",
+      "stimulus": {
+        "statement": "В последнее время моя жизнь ощущается как процесс роста",
+        "question": "Насколько это про вас?"
+      },
+      "response_format": {
+        "type": "slider",
+        "left_anchor": "Совсем не про меня",
+        "right_anchor": "Однозначно про меня",
+        "scale": [0, 10]
+      }
+    }
+  ]
+}

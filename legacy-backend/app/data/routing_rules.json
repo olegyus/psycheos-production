@@ -1,0 +1,256 @@
+{
+  "routing_rules_version": "1.0",
+  "description": "Правила маршрутизации для PsycheOS Screening Bot",
+  "priority_order": [
+    "completion_check",
+    "initial_sequence",
+    "overload_handling",
+    "rigidity_handling",
+    "high_variability_handling",
+    "contradiction_handling",
+    "avoidance_handling",
+    "standard_routing"
+  ],
+  "rules": {
+    "completion_check": {
+      "priority": 1,
+      "description": "Проверка условий завершения сессии",
+      "conditions": {
+        "any_of": [
+          {
+            "all_continua_confidence": {
+              "operator": ">=",
+              "value": 0.7
+            }
+          },
+          {
+            "screens_shown": {
+              "operator": ">=",
+              "value": 20
+            }
+          }
+        ]
+      },
+      "action": {
+        "type": "finalize_session",
+        "generate_output": true
+      }
+    },
+    "initial_sequence": {
+      "priority": 2,
+      "description": "Начальная последовательность для базового покрытия",
+      "conditions": {
+        "screens_shown": {
+          "operator": "<",
+          "value": 4
+        }
+      },
+      "action": {
+        "type": "select_initial_screen",
+        "sequence": [
+          {
+            "continuum": "economy_exploration",
+            "screen_type": "slider",
+            "context": "uncertainty",
+            "load_level": "medium"
+          },
+          {
+            "continuum": "protection_contact",
+            "screen_type": "slider",
+            "context": "social",
+            "load_level": "medium"
+          },
+          {
+            "continuum": "retention_movement",
+            "screen_type": "slider",
+            "context": "future",
+            "load_level": "medium"
+          },
+          {
+            "continuum": "survival_development",
+            "screen_type": "slider",
+            "context": "work",
+            "load_level": "medium"
+          }
+        ]
+      }
+    },
+    "overload_handling": {
+      "priority": 3,
+      "description": "Обработка когнитивной перегрузки",
+      "conditions": {
+        "flags.overload": {
+          "operator": "==",
+          "value": true
+        }
+      },
+      "action": {
+        "type": "reduce_load",
+        "modifications": {
+          "load_level": "low",
+          "prefer_screen_type": "forced_choice",
+          "simplify_situations": true
+        },
+        "selection": {
+          "continuum": "lowest_confidence",
+          "context": "most_familiar",
+          "screen_type": "forced_choice"
+        }
+      }
+    },
+    "rigidity_handling": {
+      "priority": 4,
+      "description": "Обработка флага ригидности",
+      "conditions": {
+        "flags.rigidity": {
+          "operator": "==",
+          "value": true
+        }
+      },
+      "action": {
+        "type": "check_automatic_reactions",
+        "selection": {
+          "continuum": "with_low_variability",
+          "screen_type": "trigger",
+          "context": "different_from_previous",
+          "load_level": "high"
+        },
+        "goal": "Проверить автоматические реакции под нагрузкой"
+      }
+    },
+    "high_variability_handling": {
+      "priority": 5,
+      "description": "Обработка высокой вариативности",
+      "conditions": {
+        "flags.high_variability": {
+          "operator": "==",
+          "value": true
+        }
+      },
+      "action": {
+        "type": "map_contexts",
+        "selection": {
+          "continuum": "with_high_variability",
+          "screen_type": "slider",
+          "context": "cycle_through_all",
+          "load_level": "medium"
+        },
+        "goal": "Составить карту контекстных различий"
+      }
+    },
+    "contradiction_handling": {
+      "priority": 6,
+      "description": "Обработка противоречивости ответов",
+      "conditions": {
+        "flags.contradiction": {
+          "operator": "==",
+          "value": true
+        }
+      },
+      "action": {
+        "type": "verify_perception",
+        "selection": {
+          "continuum": "with_contradiction",
+          "screen_type": "recognition",
+          "context": "neutral",
+          "load_level": "low"
+        },
+        "goal": "Проверить самовосприятие и устойчивость паттерна"
+      }
+    },
+    "avoidance_handling": {
+      "priority": 7,
+      "description": "Обработка уклонения от выбора",
+      "conditions": {
+        "flags.avoidance": {
+          "operator": "==",
+          "value": true
+        }
+      },
+      "action": {
+        "type": "reduce_ambiguity",
+        "selection": {
+          "continuum": "lowest_confidence",
+          "screen_type": "forced_choice",
+          "context": "concrete_scenario",
+          "load_level": "medium"
+        },
+        "modifications": {
+          "avoid_abstract_formulations": true,
+          "prefer_concrete_examples": true
+        },
+        "goal": "Снизить амбивалентность через конкретизацию"
+      }
+    },
+    "standard_routing": {
+      "priority": 8,
+      "description": "Стандартная маршрутизация при отсутствии активных флагов",
+      "conditions": {
+        "all_of": [
+          {"screens_shown": {"operator": ">=", "value": 4}},
+          {"no_active_flags": true}
+        ]
+      },
+      "action": {
+        "type": "standard_assessment",
+        "selection": {
+          "continuum": "lowest_confidence",
+          "screen_type": "alternate_slider_choice",
+          "context": "prioritize_uncovered",
+          "load_level": "medium"
+        },
+        "goal": "Равномерное углубление оценки"
+      }
+    }
+  },
+  "context_selection_logic": {
+    "priority_1": "uncovered_contexts",
+    "priority_2": "context_with_max_deviation_from_position",
+    "priority_3": "rotate_in_order",
+    "rotation_order": ["social", "work", "uncertainty", "body", "future"]
+  },
+  "load_level_logic": {
+    "low": {
+      "conditions": ["flags.overload == true"],
+      "rationale": "Снизить когнитивную нагрузку"
+    },
+    "high": {
+      "conditions": [
+        "flags.rigidity == true",
+        "flags.contradiction == true"
+      ],
+      "rationale": "Увеличить вызов для проявления паттерна"
+    },
+    "medium": {
+      "conditions": ["default"],
+      "rationale": "Баланс между информативностью и комфортом"
+    }
+  },
+  "screen_type_alternation": {
+    "pattern": ["slider", "forced_choice", "slider", "recognition", "slider", "trigger"],
+    "description": "Чередование типов экранов при стандартной маршрутизации"
+  },
+  "confidence_calculation": {
+    "formula": "min(1.0, responses_count * 0.2)",
+    "description": "Уверенность растёт с количеством ответов: 0.2 за каждый ответ, максимум 1.0"
+  },
+  "variability_thresholds": {
+    "rigidity": {
+      "threshold": 10,
+      "operator": "<",
+      "description": "Стандартное отклонение меньше 10"
+    },
+    "high_variability": {
+      "threshold": 30,
+      "operator": ">",
+      "description": "Стандартное отклонение больше 30"
+    }
+  },
+  "quality_criteria": {
+    "minimum_screens_per_continuum": 3,
+    "minimum_contexts_covered": 4,
+    "minimum_final_confidence": 0.6,
+    "maximum_session_duration_minutes": 20,
+    "maximum_screens_total": 20
+  }
+}
