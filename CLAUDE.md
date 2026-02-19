@@ -10,7 +10,7 @@ PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for 
 - **AI**: Anthropic Claude API (integrated in future phases)
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
-- **Current phase**: Phase 4 in progress — Interpretator + Conceptualizator migrated (2/4 tool bots done)
+- **Current phase**: Phase 4 in progress — Interpretator + Conceptualizator + Simulator migrated (3/4 tool bots done)
 
 ---
 
@@ -34,15 +34,23 @@ psycheos-production/
 │   │   ├── pro.py               # Pro bot handler (Phase 2 — full implementation)
 │   │   ├── interpretator.py     # Interpretator bot (Phase 4 ✅ migrated)
 │   │   ├── conceptualizator.py  # Conceptualizator bot (Phase 4 ✅ migrated)
-│   │   └── stubs.py             # Screen/Simulator (stubs)
+│   │   ├── simulator.py         # Simulator bot (Phase 4 ✅ migrated)
+│   │   └── stubs.py             # Screen (stub)
 │   ├── services/
 │   │   ├── interpreter/         # Interpreter service modules
-│   │   └── conceptualizer/      # Conceptualizer service modules
-│   │       ├── enums.py         #   SessionStateEnum, HypothesisType, PsycheLevelEnum, …
-│   │       ├── models.py        #   Pydantic v2: SessionState, Hypothesis, LayerA/B/C, …
-│   │       ├── decision_policy.py #  PriorityChecker + QuestionGenerator + selector
-│   │       ├── analysis.py      #   Async hypothesis extraction via Claude
-│   │       └── output.py        #   Async three-layer output assembly via Claude
+│   │   ├── conceptualizer/      # Conceptualizer service modules
+│   │   │   ├── enums.py         #   SessionStateEnum, HypothesisType, PsycheLevelEnum, …
+│   │   │   ├── models.py        #   Pydantic v2: SessionState, Hypothesis, LayerA/B/C, …
+│   │   │   ├── decision_policy.py #  PriorityChecker + QuestionGenerator + selector
+│   │   │   ├── analysis.py      #   Async hypothesis extraction via Claude
+│   │   │   └── output.py        #   Async three-layer output assembly via Claude
+│   │   └── simulator/           # Simulator service modules
+│   │       ├── schemas.py       #   Pydantic v2: SessionData, TSIComponents, BuiltinCase, …
+│   │       ├── cases.py         #   3 встроенных кейса (CASE_01_NEUROTIC, …)
+│   │       ├── goals.py         #   GOAL_LABELS, MODE_LABELS
+│   │       ├── system_prompt.py #   build_system_prompt(case, goal, mode)
+│   │       ├── formatter.py     #   parse_claude_response, format_for_telegram, format_intro
+│   │       └── report_generator.py # generate_report_docx() → io.BytesIO (python-docx)
 │   └── utils/
 │       └── idempotency.py    # Idempotency key builder (format from Dev Spec Appendix C)
 ├── scripts/
@@ -62,7 +70,7 @@ psycheos-production/
 | `screen`          | Client-facing         | Stub (Phase 4)     | `webhooks/stubs.py`           |
 | `interpretator`   | AI diagnostic tool    | **Phase 4 ✅ done** | `webhooks/interpretator.py`  |
 | `conceptualizator`| Conceptualization     | **Phase 4 ✅ done** | `webhooks/conceptualizator.py` |
-| `simulator`       | Simulation            | Phase 4 next       | `webhooks/stubs.py`           |
+| `simulator`       | Simulation            | **Phase 4 ✅ done** | `webhooks/simulator.py`       |
 
 Each bot has its own Telegram token and webhook secret, all in env vars.
 
@@ -302,7 +310,7 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 | 1     | Project skeleton, DB schema, webhook pipeline                                      | Done            |
 | 2     | Pro bot: invite-only registration, cases, admin panel                              | Done            |
 | 3     | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | **Done**        |
-| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **In progress** (2/4 done: Interpretator ✅ Conceptualizator ✅) |
+| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **In progress** (3/4 done: Interpretator ✅ Conceptualizator ✅ Simulator ✅) |
 | 5     | Claude AI integration for analysis tools                                           | Planned         |
 | 6     | Client-side (Screen bot) session flow                                              | Planned         |
 | 7     | Billing (Telegram Stars)                                                           | Planned         |
@@ -327,7 +335,7 @@ No authentication required. Used by Railway for healthchecks.
 | Screen           | Требует v2                | Поменялся банк вопросов, шкалы и логика работы. Нужна переделка                                              |
 | Interpreter      | ✅ Мигрирован (Phase 4)   | `app/webhooks/interpretator.py`; оригинал: `./psycheos-interpreter`                                          |
 | Conceptualizer   | ✅ Мигрирован (Phase 4)   | `app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`; оригинал: `./psycheos-conceptualizer`  |
-| Simulator        | Следующий               | Оригинал ожидается в `./psycheos-simulator`                                                                  |
+| Simulator        | ✅ Мигрирован (Phase 4)   | `app/webhooks/simulator.py` + `app/services/simulator/`; оригинал: `./psycheos-simulator`                   |
 
 ---
 
@@ -335,8 +343,8 @@ No authentication required. Used by Railway for healthchecks.
 
 1. ✅ Interpreter — мигрирован (`app/webhooks/interpretator.py`)
 2. ✅ Conceptualizer — мигрирован (`app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`)
-3. 🔄 Simulator — следующий (`./psycheos-simulator`, ожидается загрузка)
-4. ⬜ Screen v2 — новый банк вопросов + логика
+3. ✅ Simulator — мигрирован (`app/webhooks/simulator.py` + `app/services/simulator/`)
+4. 🔄 Screen v2 — новый банк вопросов + логика (следующий)
 5. ⬜ Pro v2 — зависит от всех остальных ботов
 
 ---
@@ -357,3 +365,7 @@ No authentication required. Used by Railway for healthchecks.
 - **Callback для клиентской ссылки:** `screen_link_{context_id}` (отдельный паттерн от `launch_`, т.к. разные role и subject_id)
 - **Хранение сессии в tool-ботах:** Redis отсутствует; полное состояние сессии (Pydantic-модель) сериализуется в `state_payload["session"]` через `model.model_dump(mode="json")` и восстанавливается через `Model.model_validate(data)`. `bot_chat_state.state` дублирует `session.state.value` для маршрутизации без десериализации
 - **Pydantic v2:** все сервисные модели (`app/services/*/models.py`) используют Pydantic v2 API (`model_dump`, `model_validate`). Совместимость v1-стиля (`class Config`) в оригинальных ботах не переносится
+- **python-docx:** Simulator генерирует аналитический отчёт `.docx` через `python-docx`; `generate_report_docx()` возвращает `io.BytesIO` (не путь к файлу), отправляется через `InputFile(buf, filename=...)` — никаких временных файлов на диске
+- **Профиль специалиста в Simulator:** `SpecialistProfile` хранится в `state_payload["profile"]` (сериализация Pydantic v2); накапливается между сессиями в рамках одного чата; обновляется при `/end`
+- **Simulator FSM:** `bot_chat_state.state` = `"setup"` | `"active"` | `"complete"`; `state_payload["setup_step"]` = `"mode"` | `"case"` | `"goal"` | `"upload"` | `"crisis"` | `"goal_practice"` — детализирует шаг настройки без отдельных таблиц
+- **Callback queries в Simulator:** `update.callback_query` обрабатывается в том же хендлере, что и `update.message`; `router_factory` уже извлекает `chat_id`/`user_id` из callback через `extract_chat_id`/`extract_user_id`
