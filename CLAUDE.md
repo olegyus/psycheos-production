@@ -23,11 +23,12 @@ psycheos-production/
 │   ├── config.py             # All settings via pydantic-settings (env vars)
 │   ├── database.py           # Async SQLAlchemy engine + session factory
 │   ├── models/
-│   │   ├── user.py           # User (specialist/client) — table: users
-│   │   ├── invite.py         # Invite tokens — table: invites
-│   │   ├── context.py        # Case/client context — table: contexts
-│   │   ├── bot_chat_state.py # FSM state per (bot, chat) — table: bot_chat_state
-│   │   └── telegram_dedup.py # Dedup table — table: telegram_update_dedup
+│   │   ├── user.py                    # User (specialist/client) — table: users
+│   │   ├── invite.py                  # Invite tokens — table: invites
+│   │   ├── context.py                 # Case/client context — table: contexts
+│   │   ├── bot_chat_state.py          # FSM state per (bot, chat) — table: bot_chat_state
+│   │   ├── telegram_dedup.py          # Dedup table — table: telegram_update_dedup
+│   │   └── screening_assessment.py    # Screen v2 assessment — table: screening_assessments
 │   ├── webhooks/
 │   │   ├── router_factory.py    # Generic webhook router factory (shared pipeline)
 │   │   ├── common.py            # Shared logic: secret verify, dedup, FSM load/save
@@ -108,6 +109,25 @@ Each bot has its own Telegram token and webhook secret, all in env vars.
 ### `telegram_update_dedup` — Exactly-once processing
 - PK: `(bot_id, update_id)` — prevents double-processing on webhook retries
 - INSERT ... ON CONFLICT DO NOTHING — if rowcount=0 → duplicate, skip
+
+### `screening_assessments` — Screen v2 assessment sessions
+- `id` UUID PK (gen_random_uuid)
+- `context_id` UUID FK → `contexts.context_id` — NOT NULL
+- `specialist_user_id` BigInteger — telegram_id специалиста (NOT NULL)
+- `client_chat_id` BigInteger nullable — telegram chat_id клиента (заполняется при verify)
+- `status` String(20) — `"created"` | `"in_progress"` | `"completed"` | `"expired"`
+- `phase` Integer — текущая фаза (0=не начато, 1, 2, 3)
+- `phase1_completed` Boolean — фаза 1 завершена
+- `phase2_questions`, `phase3_questions` Integer — счётчики вопросов по фазам
+- `axis_vector`, `layer_vector`, `tension_matrix`, `rigidity` JSONB — скоринговые векторы
+- `confidence` Float — общая уверенность модели
+- `ambiguity_zones`, `dominant_cells` JSONB — зоны неопределённости, топ ячеек матрицы
+- `response_history` JSONB — история ответов `[{question_id, answer, score, timestamp}]`
+- `report_json` JSONB nullable — структурированный отчёт
+- `report_text` Text nullable — текстовое резюме для специалиста
+- `created_at`, `started_at`, `completed_at`, `expires_at` DateTime(tz)
+- `link_token_jti` UUID FK → `link_tokens.jti` nullable
+- Index на `context_id` и `status`
 
 ---
 
@@ -310,7 +330,7 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 | 1     | Project skeleton, DB schema, webhook pipeline                                      | Done            |
 | 2     | Pro bot: invite-only registration, cases, admin panel                              | Done            |
 | 3     | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | **Done**        |
-| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **In progress** (3/4 done: Interpretator ✅ Conceptualizator ✅ Simulator ✅) |
+| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **In progress** (3/4 done: Interpretator ✅ Conceptualizator ✅ Simulator ✅; Screen v2 Step 1 ✅) |
 | 5     | Claude AI integration for analysis tools                                           | Planned         |
 | 6     | Client-side (Screen bot) session flow                                              | Planned         |
 | 7     | Billing (Telegram Stars)                                                           | Planned         |
@@ -344,7 +364,8 @@ No authentication required. Used by Railway for healthchecks.
 1. ✅ Interpreter — мигрирован (`app/webhooks/interpretator.py`)
 2. ✅ Conceptualizer — мигрирован (`app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`)
 3. ✅ Simulator — мигрирован (`app/webhooks/simulator.py` + `app/services/simulator/`)
-4. 🔄 Screen v2 — новый банк вопросов + логика (следующий)
+4. 🔄 Screen v2 — новый банк вопросов + логика (в процессе)
+   - ✅ Step 1: модель БД `screening_assessments` + миграция 0002
 5. ⬜ Pro v2 — зависит от всех остальных ботов
 
 ---
