@@ -311,6 +311,11 @@ async def handle_callback(
             await query.edit_message_text("Кейс не найден.", reply_markup=back_to_main_kb())
             return
 
+        user = await get_user_by_tg(db, user_id)
+        if not user or ctx.specialist_user_id != user.user_id:
+            await query.edit_message_text("Нет доступа к этому кейсу.", reply_markup=back_to_main_kb())
+            return
+
         label = ctx.client_ref or str(ctx.context_id)[:8]
         created = ctx.created_at.strftime("%d.%m.%Y")
 
@@ -331,7 +336,7 @@ async def handle_callback(
 
     if data.startswith("screen_link_"):
         context_id_str = data[len("screen_link_"):]
-        await handle_screen_link(query, bot, db, chat_id, context_id_str)
+        await handle_screen_link(query, bot, db, chat_id, user_id, context_id_str)
         return
 
     # ── Admin callbacks ──
@@ -407,7 +412,7 @@ _TOOL_LABELS = {
 }
 
 
-async def handle_screen_link(query, bot, db, chat_id, context_id_str):
+async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
     """Issue an open client token for Screen and send the link to the specialist."""
     username = settings.tool_bot_usernames.get("screen", "")
     if not username:
@@ -418,6 +423,16 @@ async def handle_screen_link(query, bot, db, chat_id, context_id_str):
         context_id = uuid.UUID(context_id_str)
     except ValueError:
         await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
+        return
+
+    result = await db.execute(select(Context).where(Context.context_id == context_id))
+    ctx = result.scalar_one_or_none()
+    if not ctx:
+        await query.answer("Кейс не найден.", show_alert=True)
+        return
+    user = await get_user_by_tg(db, user_id)
+    if not user or ctx.specialist_user_id != user.user_id:
+        await query.answer("Нет доступа к этому кейсу.", show_alert=True)
         return
 
     # subject_id=0 — open token: client's Telegram ID is unknown at issue time
@@ -459,6 +474,16 @@ async def handle_launch_tool(query, bot, db, chat_id, user_id, service_id, conte
         context_id = uuid.UUID(context_id_str)
     except ValueError:
         await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
+        return
+
+    result = await db.execute(select(Context).where(Context.context_id == context_id))
+    ctx = result.scalar_one_or_none()
+    if not ctx:
+        await query.answer("Кейс не найден.", show_alert=True)
+        return
+    user = await get_user_by_tg(db, user_id)
+    if not user or ctx.specialist_user_id != user.user_id:
+        await query.answer("Нет доступа к этому кейсу.", show_alert=True)
         return
 
     token = await issue_link(
