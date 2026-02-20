@@ -151,6 +151,9 @@ async def _handle_text(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "content": text,
     })
+    # When specialist answers a clarifying question, record it separately
+    if state.state == "intake":
+        payload.setdefault("clarifications_received", []).append(text)
 
     await bot.send_chat_action(chat_id=chat_id, action="typing")
     await _run_intake(bot, db, payload, state, chat_id, user_id)
