@@ -11,6 +11,7 @@ from fastapi import FastAPI
 
 from app.config import settings
 from app.database import engine, Base
+import app.models  # noqa: F401 — registers all ORM models in Base.metadata (needed for create_all)
 from app.webhooks.router_factory import create_webhook_router
 from app.webhooks.pro import handle_pro
 from app.webhooks.interpretator import handle_interpretator
