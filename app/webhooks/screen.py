@@ -218,7 +218,9 @@ async def _handle_callback(
                 state_payload=new_payload, user_id=user_id, role="client",
                 context_id=state.context_id if state else None,
             )
-            await _show_multi_select(bot, chat_id, result["screen"], [])
+            screen_index = result.get("screen_index", 0)
+            header = f"📋 Вопрос {screen_index + 1} из 6" if result["phase"] == 1 else None
+            await _show_multi_select(bot, chat_id, result["screen"], [], header=header)
         elif result["action"] == "complete":
             await _handle_completion(bot, db, chat_id, user_id, state, result)
         return
@@ -297,7 +299,9 @@ async def _handle_callback(
             # Notify client when entering a new phase
             if next_state != current_state:
                 await _show_phase_transition(bot, chat_id, current_state, next_state)
-            await _show_multi_select(bot, chat_id, result["screen"], [])
+            screen_idx = result.get("screen_index", 0)
+            ph1_header = f"📋 Вопрос {screen_idx + 1} из 6" if next_phase == 1 else None
+            await _show_multi_select(bot, chat_id, result["screen"], [], header=ph1_header)
         elif result["action"] == "complete":
             await bot.send_message(chat_id=chat_id, text="⏳ Анализирую ваши ответы...")
             await _handle_completion(bot, db, chat_id, user_id, state, result)
@@ -331,10 +335,12 @@ async def _show_phase_transition(
 
 
 async def _show_multi_select(
-    bot: Bot, chat_id: int, screen: dict, selected: list[int]
+    bot: Bot, chat_id: int, screen: dict, selected: list[int], header: str | None = None
 ) -> None:
     """Send a new multi-select question message."""
     question = screen.get("question", "")
+    if header:
+        question = f"{header}\n\n{question}"
     options = screen.get("options", [])
 
     buttons = []
