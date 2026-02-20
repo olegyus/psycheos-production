@@ -114,12 +114,13 @@ def back_to_admin_kb() -> InlineKeyboardMarkup:
 
 
 def case_tools_kb(context_id: str) -> InlineKeyboardMarkup:
-    """Keyboard for case view — tool launch buttons + back."""
+    """Keyboard for case view — tool launch buttons + archive + back."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🧠 Интерпретатор",    callback_data=f"launch_interpretator_{context_id}")],
         [InlineKeyboardButton("💡 Концептуализатор", callback_data=f"launch_conceptualizator_{context_id}")],
         [InlineKeyboardButton("🎭 Симулятор",        callback_data=f"launch_simulator_{context_id}")],
         [InlineKeyboardButton("📤 Ссылка для клиента", callback_data=f"screen_link_{context_id}")],
+        [InlineKeyboardButton("🗄 Архивировать",     callback_data=f"case_archive_{context_id}")],
         [InlineKeyboardButton("◀️ Мои кейсы",       callback_data="cases_list")],
     ])
 
@@ -203,7 +204,9 @@ async def handle_text(
     user = await get_user_by_tg(db, user_id)
     if user:
         await bot.send_message(
-            chat_id=chat_id, text="Используйте меню:", reply_markup=main_menu_kb(),
+            chat_id=chat_id,
+            text="Используйте меню или 📚 Справочник для вопросов о системе PsycheOS.",
+            reply_markup=main_menu_kb(),
         )
     else:
         await bot.send_message(
@@ -288,6 +291,7 @@ async def handle_callback(
             lines.append(f"• {label}")
             buttons.append([InlineKeyboardButton(f"📄 {label}", callback_data=f"case_{c.context_id}")])
         buttons.append([InlineKeyboardButton("➕ Новый кейс", callback_data="case_new")])
+        buttons.append([InlineKeyboardButton("📦 Архив", callback_data="cases_list_archived")])
         buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="main_menu")])
 
         await query.edit_message_text(
@@ -311,6 +315,11 @@ async def handle_callback(
             await query.edit_message_text("Кейс не найден.", reply_markup=back_to_main_kb())
             return
 
+        user = await get_user_by_tg(db, user_id)
+        if not user or ctx.specialist_user_id != user.user_id:
+            await query.edit_message_text("Нет доступа к этому кейсу.", reply_markup=back_to_main_kb())
+            return
+
         label = ctx.client_ref or str(ctx.context_id)[:8]
         created = ctx.created_at.strftime("%d.%m.%Y")
 
@@ -324,6 +333,44 @@ async def handle_callback(
         )
         return
 
+    if data.startswith("case_archive_"):
+        context_id_str = data[len("case_archive_"):]
+        await handle_case_archive(query, db, user_id, context_id_str)
+        return
+
+    if data == "cases_list_archived":
+        user = await get_user_by_tg(db, user_id)
+        if not user:
+            return
+        result = await db.execute(
+            select(Context)
+            .where(Context.specialist_user_id == user.user_id, Context.status == "archived")
+            .order_by(Context.created_at.desc()).limit(20)
+        )
+        archived = result.scalars().all()
+
+        if not archived:
+            await query.edit_message_text(
+                text="📦 Архив пуст.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("◀️ Мои кейсы", callback_data="cases_list")],
+                ]),
+            )
+            return
+
+        lines = ["📦 *Архивированные кейсы:*\n"]
+        buttons = []
+        for c in archived:
+            label = c.client_ref or str(c.context_id)[:8]
+            lines.append(f"• {label}")
+            buttons.append([InlineKeyboardButton(f"📄 {label}", callback_data=f"case_{c.context_id}")])
+        buttons.append([InlineKeyboardButton("◀️ Мои кейсы", callback_data="cases_list")])
+
+        await query.edit_message_text(
+            text="\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown",
+        )
+        return
+
     if data.startswith("launch_"):
         _, service_id, context_id_str = data.split("_", 2)
         await handle_launch_tool(query, bot, db, chat_id, user_id, service_id, context_id_str)
@@ -331,7 +378,7 @@ async def handle_callback(
 
     if data.startswith("screen_link_"):
         context_id_str = data[len("screen_link_"):]
-        await handle_screen_link(query, bot, db, chat_id, context_id_str)
+        await handle_screen_link(query, bot, db, chat_id, user_id, context_id_str)
         return
 
     # ── Admin callbacks ──
@@ -387,6 +434,37 @@ async def handle_callback(
 
 # ──────────────────── FSM Actions ────────────────────
 
+async def handle_case_archive(query, db, user_id, context_id_str):
+    """Archive a case after verifying ownership."""
+    try:
+        context_id = uuid.UUID(context_id_str)
+    except ValueError:
+        await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
+        return
+
+    result = await db.execute(select(Context).where(Context.context_id == context_id))
+    ctx = result.scalar_one_or_none()
+    if not ctx:
+        await query.answer("Кейс не найден.", show_alert=True)
+        return
+
+    user = await get_user_by_tg(db, user_id)
+    if not user or ctx.specialist_user_id != user.user_id:
+        await query.answer("Нет доступа к этому кейсу.", show_alert=True)
+        return
+
+    ctx.status = "archived"
+    await db.flush()
+
+    label = ctx.client_ref or str(ctx.context_id)[:8]
+    await query.edit_message_text(
+        text=f"🗄 Кейс «{label}» перемещён в архив.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("◀️ Мои кейсы", callback_data="cases_list")],
+        ]),
+    )
+
+
 async def create_case(bot, db, state, chat_id, user_id, case_name):
     user = await get_user_by_tg(db, user_id)
     if not user:
@@ -395,8 +473,18 @@ async def create_case(bot, db, state, chat_id, user_id, case_name):
     db.add(ctx)
     await db.flush()
     await upsert_chat_state(db, "pro", chat_id, "main_menu", user_id=user_id)
+
+    label = ctx.client_ref or str(ctx.context_id)[:8]
+    created = ctx.created_at.strftime("%d.%m.%Y")
     await bot.send_message(
-        chat_id=chat_id, text=f"✅ Кейс «{case_name}» создан.", reply_markup=main_menu_kb(),
+        chat_id=chat_id,
+        text=f"✅ Кейс «{label}» создан.\n\n"
+             f"📄 *Кейс: {label}*\n"
+             f"Создан: {created}\n"
+             f"Статус: {ctx.status}\n\n"
+             f"🛠 Выберите инструмент для запуска:",
+        reply_markup=case_tools_kb(str(ctx.context_id)),
+        parse_mode="Markdown",
     )
 
 
@@ -407,7 +495,7 @@ _TOOL_LABELS = {
 }
 
 
-async def handle_screen_link(query, bot, db, chat_id, context_id_str):
+async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
     """Issue an open client token for Screen and send the link to the specialist."""
     username = settings.tool_bot_usernames.get("screen", "")
     if not username:
@@ -418,6 +506,16 @@ async def handle_screen_link(query, bot, db, chat_id, context_id_str):
         context_id = uuid.UUID(context_id_str)
     except ValueError:
         await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
+        return
+
+    result = await db.execute(select(Context).where(Context.context_id == context_id))
+    ctx = result.scalar_one_or_none()
+    if not ctx:
+        await query.answer("Кейс не найден.", show_alert=True)
+        return
+    user = await get_user_by_tg(db, user_id)
+    if not user or ctx.specialist_user_id != user.user_id:
+        await query.answer("Нет доступа к этому кейсу.", show_alert=True)
         return
 
     # subject_id=0 — open token: client's Telegram ID is unknown at issue time
@@ -459,6 +557,16 @@ async def handle_launch_tool(query, bot, db, chat_id, user_id, service_id, conte
         context_id = uuid.UUID(context_id_str)
     except ValueError:
         await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
+        return
+
+    result = await db.execute(select(Context).where(Context.context_id == context_id))
+    ctx = result.scalar_one_or_none()
+    if not ctx:
+        await query.answer("Кейс не найден.", show_alert=True)
+        return
+    user = await get_user_by_tg(db, user_id)
+    if not user or ctx.specialist_user_id != user.user_id:
+        await query.answer("Нет доступа к этому кейсу.", show_alert=True)
         return
 
     token = await issue_link(
