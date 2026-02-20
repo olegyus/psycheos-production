@@ -19,6 +19,7 @@ from app.webhooks.conceptualizator import handle_conceptualizator
 from app.webhooks.simulator import handle_simulator
 from app.webhooks.stubs import handle_screen
 from app.routers.links import router as links_router
+from app.routers.artifacts import router as artifacts_router
 
 # --- Logging ---
 logging.basicConfig(
@@ -65,6 +66,9 @@ async def health():
 
 # --- Links API ---
 app.include_router(links_router)
+
+# --- Artifacts API ---
+app.include_router(artifacts_router)
 
 
 # --- Webhook routers ---
