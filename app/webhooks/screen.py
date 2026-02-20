@@ -372,27 +372,45 @@ async def _handle_completion(
     )
 
     # Notify specialist via Pro bot
-    if state and state.context_id:
-        await _notify_specialist(db, state.context_id)
+    assessment_id_str = payload.get("assessment_id")
+    if assessment_id_str:
+        await _notify_specialist(db, assessment_id_str, state.context_id if state else None)
 
 
-async def _notify_specialist(db: AsyncSession, context_id) -> None:
-    """Send a completion notification to the specialist in the Pro bot."""
+async def _notify_specialist(
+    db: AsyncSession, assessment_id_str: str, context_id
+) -> None:
+    """Send a completion notification to the specialist in the Pro bot.
+
+    specialist_user_id is taken from ScreeningAssessment (BigInteger Telegram ID).
+    Context is loaded only to get client_ref for the label.
+    """
     try:
-        result = await db.execute(
-            select(Context).where(Context.context_id == context_id)
+        assessment_result = await db.execute(
+            select(ScreeningAssessment).where(
+                ScreeningAssessment.id == UUID(assessment_id_str)
+            )
         )
-        ctx = result.scalar_one_or_none()
-        if not ctx:
+        assessment = assessment_result.scalar_one_or_none()
+        if not assessment:
+            logger.warning("[screen] _notify_specialist: assessment %s not found", assessment_id_str)
             return
+
+        specialist_telegram_id: int = assessment.specialist_user_id  # BigInteger Telegram ID
+
+        label: str = str(assessment_id_str)[:8]
+        if context_id:
+            ctx_result = await db.execute(
+                select(Context).where(Context.context_id == context_id)
+            )
+            ctx = ctx_result.scalar_one_or_none()
+            if ctx and ctx.client_ref:
+                label = ctx.client_ref
 
         from telegram import Bot as TgBot
         pro_bot = TgBot(token=settings.TG_TOKEN_PRO)
-        label = ctx.client_ref or str(ctx.context_id)[:8]
-        specialist_chat_id = ctx.specialist_user_id
-
         await pro_bot.send_message(
-            chat_id=specialist_chat_id,
+            chat_id=specialist_telegram_id,
             text=(
                 f"✅ *Скрининг завершён*\n\n"
                 f"Кейс: {label}\n\n"
