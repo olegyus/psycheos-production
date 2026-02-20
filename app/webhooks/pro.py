@@ -471,8 +471,18 @@ async def create_case(bot, db, state, chat_id, user_id, case_name):
     db.add(ctx)
     await db.flush()
     await upsert_chat_state(db, "pro", chat_id, "main_menu", user_id=user_id)
+
+    label = ctx.client_ref or str(ctx.context_id)[:8]
+    created = ctx.created_at.strftime("%d.%m.%Y")
     await bot.send_message(
-        chat_id=chat_id, text=f"✅ Кейс «{case_name}» создан.", reply_markup=main_menu_kb(),
+        chat_id=chat_id,
+        text=f"✅ Кейс «{label}» создан.\n\n"
+             f"📄 *Кейс: {label}*\n"
+             f"Создан: {created}\n"
+             f"Статус: {ctx.status}\n\n"
+             f"🛠 Выберите инструмент для запуска:",
+        reply_markup=case_tools_kb(str(ctx.context_id)),
+        parse_mode="Markdown",
     )
 
 
