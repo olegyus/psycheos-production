@@ -294,6 +294,9 @@ async def _handle_callback(
                 state_payload=new_payload, user_id=user_id, role="client",
                 context_id=state.context_id if state else None,
             )
+            # Notify client when entering a new phase
+            if next_state != current_state:
+                await _show_phase_transition(bot, chat_id, current_state, next_state)
             await _show_multi_select(bot, chat_id, result["screen"], [])
         elif result["action"] == "complete":
             await bot.send_message(chat_id=chat_id, text="⏳ Анализирую ваши ответы...")
@@ -304,6 +307,28 @@ async def _handle_callback(
 # ---------------------------------------------------------------------------
 # UI helpers
 # ---------------------------------------------------------------------------
+
+_PHASE_TRANSITION_TEXTS: dict[tuple[str, str], str] = {
+    ("phase1", "phase2"): (
+        "✅ Первая часть пройдена.\n\n"
+        "📝 Переходим к уточняющим вопросам — их будет немного, "
+        "они помогут лучше понять вашу ситуацию."
+    ),
+    ("phase2", "phase3"): (
+        "✅ Основные вопросы пройдены.\n\n"
+        "🔍 Последний блок — несколько дополнительных вопросов для уточнения."
+    ),
+}
+
+
+async def _show_phase_transition(
+    bot: Bot, chat_id: int, from_state: str, to_state: str
+) -> None:
+    """Send a brief transition message when moving between phases."""
+    text = _PHASE_TRANSITION_TEXTS.get((from_state, to_state))
+    if text:
+        await bot.send_message(chat_id=chat_id, text=text)
+
 
 async def _show_multi_select(
     bot: Bot, chat_id: int, screen: dict, selected: list[int]
