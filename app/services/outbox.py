@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from telegram import Bot, InputFile
+from telegram import Bot, InputFile, InlineKeyboardMarkup
 
 from app.models.outbox_message import OutboxMessage
 
@@ -131,7 +131,13 @@ async def dispatch_one(db: AsyncSession, bots: dict[str, Bot]) -> bool:
 # ── Internal ──────────────────────────────────────────────────────────────────
 
 async def _send(bot: Bot, tg_method: str, payload: dict) -> None:
-    """Dispatch a single Telegram API call, decoding documents if needed."""
+    """Dispatch a single Telegram API call, decoding documents and keyboards if needed."""
+    # Deserialise InlineKeyboardMarkup stored as plain dict in JSONB.
+    if "reply_markup" in payload and isinstance(payload["reply_markup"], dict):
+        payload["reply_markup"] = InlineKeyboardMarkup.de_json(
+            payload["reply_markup"], bot
+        )
+
     if tg_method == "send_message":
         await bot.send_message(**payload)
 
@@ -152,6 +158,16 @@ async def _send(bot: Bot, tg_method: str, payload: dict) -> None:
 
 
 # ── Helper — build document payload ──────────────────────────────────────────
+
+def make_inline_keyboard(rows: list[list[dict]]) -> dict:
+    """
+    Build a JSONB-safe InlineKeyboardMarkup dict.
+
+    rows: [[{"text": "...", "callback_data": "..."}, ...], ...]
+    The dict is passed as payload["reply_markup"] and deserialised by _send().
+    """
+    return {"inline_keyboard": rows}
+
 
 def make_document_payload(
     chat_id: int,
