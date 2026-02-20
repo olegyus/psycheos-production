@@ -2,9 +2,10 @@
 Webhook handler for Interpretator bot (Phase 4).
 
 State machine (bot_chat_state.state):
-  active     — session opened via /start {jti}, awaiting first material
-  intake     — Claude asked a clarifying question in INTAKE; awaiting response
-  completed  — interpretation sent; session closed
+  active            — session opened via /start {jti}, awaiting first material
+  intake            — Claude asked a clarifying question in INTAKE; awaiting response
+  clarification_loop — material is partial/fragmentary; Claude asks phenomenological questions
+  completed         — interpretation sent; session closed
 
 state_payload keys:
   run_id, mode, iteration_count, repair_attempts,
@@ -133,7 +134,7 @@ async def _handle_text(
     bot: Bot, db: AsyncSession, text: str,
     state: BotChatState | None, chat_id: int, user_id: int | None,
 ) -> None:
-    if state is None or state.state not in ("active", "intake"):
+    if state is None or state.state not in ("active", "intake", "clarification_loop"):
         if state and state.state == "completed":
             await bot.send_message(
                 chat_id=chat_id,
@@ -151,9 +152,15 @@ async def _handle_text(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "content": text,
     })
+    # When specialist answers any clarifying question, record it separately
+    if state.state in ("intake", "clarification_loop"):
+        payload.setdefault("clarifications_received", []).append(text)
 
     await bot.send_chat_action(chat_id=chat_id, action="typing")
-    await _run_intake(bot, db, payload, state, chat_id, user_id)
+    if state.state == "clarification_loop":
+        await _run_clarification_loop(bot, db, payload, state, chat_id, user_id)
+    else:
+        await _run_intake(bot, db, payload, state, chat_id, user_id)
 
 
 # ── Photo handling ────────────────────────────────────────────────────────────
@@ -287,8 +294,153 @@ async def _run_intake(
         )
         await bot.send_message(chat_id=chat_id, text=clean)
     else:
-        # Material accepted — interpret immediately
+        # Material accepted — assess completeness before interpreting
+        await _run_material_check(bot, db, payload, state, chat_id, user_id)
+
+
+# ── Material check ────────────────────────────────────────────────────────────
+
+async def _run_material_check(
+    bot: Bot, db: AsyncSession, payload: dict,
+    state: BotChatState, chat_id: int, user_id: int | None,
+) -> None:
+    """
+    Call Claude with MATERIAL_CHECK_PROMPT to assess completeness.
+    Sets payload['completeness'] to 'sufficient' / 'partial' / 'fragmentary'.
+    Routes to _run_interpretation or _run_clarification_loop accordingly.
+    """
+    context = {
+        "session_id": _session_id(state),
+        "mode": payload.get("mode", "STANDARD"),
+        "iteration_count": payload.get("iteration_count", 0),
+        "max_iterations": _MAX_CLARIFICATION_ITERATIONS,
+        "material_type": payload.get("material_type", "unknown"),
+        "completeness": payload.get("completeness", "unknown"),
+    }
+    # Append JSON output instruction so we can reliably parse the verdict
+    system_prompt = (
+        assemble_prompt("MATERIAL_CHECK", context)
+        + '\n\nReturn JSON: {"completeness": "sufficient|partial|fragmentary",'
+        ' "message": "brief statement or clarifying question for the specialist"}'
+    )
+    material_text = "\n\n".join(
+        m["content"] for m in payload.get("accumulated_material", [])
+    )
+
+    try:
+        client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        resp = await client.messages.create(
+            model=_ANTHROPIC_MODEL,
+            max_tokens=500,
+            system=system_prompt,
+            messages=[{"role": "user", "content": material_text}],
+        )
+        response_text = resp.content[0].text
+    except Exception:
+        logger.exception(f"[{BOT_ID}] Claude MATERIAL_CHECK error user={user_id}")
+        # Fall back to interpretation so session doesn't get stuck
         await _run_interpretation(bot, db, payload, state, chat_id, user_id)
+        return
+
+    # Parse completeness verdict (JSON first, keyword fallback)
+    completeness = _parse_completeness(response_text)
+    user_message = _extract_message(response_text)
+
+    payload["completeness"] = completeness
+    logger.info(f"[{BOT_ID}] material_check completeness={completeness} user={user_id}")
+
+    if completeness == "sufficient":
+        await _run_interpretation(bot, db, payload, state, chat_id, user_id)
+    else:
+        # Partial/fragmentary — enter clarification loop
+        payload.setdefault("iteration_count", 0)
+        await upsert_chat_state(
+            db, bot_id=BOT_ID, chat_id=chat_id, state="clarification_loop",
+            state_payload=payload, user_id=user_id,
+            role=state.role, context_id=state.context_id,
+        )
+        if user_message:
+            await bot.send_message(chat_id=chat_id, text=user_message)
+
+
+def _parse_completeness(response_text: str) -> str:
+    """Extract completeness verdict from MATERIAL_CHECK response. Falls back to keywords."""
+    j = _extract_json(response_text)
+    if j and j.get("completeness") in ("sufficient", "partial", "fragmentary"):
+        return j["completeness"]
+    lower = response_text.lower()
+    if "fragmentary" in lower or "фрагментарн" in lower:
+        return "fragmentary"
+    if "partial" in lower or "частичн" in lower:
+        return "partial"
+    return "sufficient"
+
+
+# ── Clarification loop ─────────────────────────────────────────────────────────
+
+async def _run_clarification_loop(
+    bot: Bot, db: AsyncSession, payload: dict,
+    state: BotChatState, chat_id: int, user_id: int | None,
+) -> None:
+    """
+    Call Claude with CLARIFICATION_LOOP_PROMPT to ask one phenomenological question.
+    Tracks iteration_count; when limit reached → proceed to interpretation.
+    """
+    iteration_count = payload.get("iteration_count", 0)
+
+    if iteration_count >= _MAX_CLARIFICATION_ITERATIONS:
+        logger.info(f"[{BOT_ID}] clarification_loop max iterations reached user={user_id}")
+        await bot.send_message(
+            chat_id=chat_id,
+            text="⏳ Формирую интерпретацию на основе имеющихся данных...",
+        )
+        await _run_interpretation(bot, db, payload, state, chat_id, user_id)
+        return
+
+    context = {
+        "session_id": _session_id(state),
+        "mode": payload.get("mode", "STANDARD"),
+        "iteration_count": iteration_count,
+        "max_iterations": _MAX_CLARIFICATION_ITERATIONS,
+        "material_type": payload.get("material_type", "unknown"),
+        "completeness": payload.get("completeness", "unknown"),
+    }
+    system_prompt = assemble_prompt("CLARIFICATION_LOOP", context)
+
+    material_text = "\n\n".join(
+        m["content"] for m in payload.get("accumulated_material", [])
+    )
+    clarifications = payload.get("clarifications_received", [])
+    if clarifications:
+        clar_block = "\n".join(f"- {c}" for c in clarifications)
+        user_content = (
+            f"Символический материал:\n{material_text}\n\n"
+            f"Полученные уточнения:\n{clar_block}"
+        )
+    else:
+        user_content = f"Символический материал:\n{material_text}"
+
+    try:
+        client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        resp = await client.messages.create(
+            model=_ANTHROPIC_MODEL,
+            max_tokens=200,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_content}],
+        )
+        question = resp.content[0].text.strip()
+    except Exception:
+        logger.exception(f"[{BOT_ID}] Claude CLARIFICATION_LOOP error user={user_id}")
+        await _run_interpretation(bot, db, payload, state, chat_id, user_id)
+        return
+
+    payload["iteration_count"] = iteration_count + 1
+    await upsert_chat_state(
+        db, bot_id=BOT_ID, chat_id=chat_id, state="clarification_loop",
+        state_payload=payload, user_id=user_id,
+        role=state.role, context_id=state.context_id,
+    )
+    await bot.send_message(chat_id=chat_id, text=question)
 
 
 # ── Interpretation ────────────────────────────────────────────────────────────

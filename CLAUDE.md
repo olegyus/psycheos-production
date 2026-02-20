@@ -7,10 +7,10 @@ PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for 
 - **Framework**: FastAPI + async SQLAlchemy (asyncpg)
 - **Database**: PostgreSQL via Supabase (connection pooler in production)
 - **Telegram**: `python-telegram-bot` 21.x (webhook mode only, no polling)
-- **AI**: Anthropic Claude API (integrated in future phases)
+- **AI**: Anthropic Claude API ✅ интегрирован — Simulator, Conceptualizer, Interpreter используют `claude-sonnet-4-5-20250929`; Screen v2 — при генерации отчёта
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
-- **Current phase**: Phase 4 in progress — Interpretator + Conceptualizator migrated (2/4 tool bots done)
+- **Current phase**: Phase 6 **COMPLETE** — Screen UX/bug fixes ✅ + Interpreter Claude gaps filled ✅; next: Phase 7
 
 ---
 
@@ -23,30 +23,50 @@ psycheos-production/
 │   ├── config.py             # All settings via pydantic-settings (env vars)
 │   ├── database.py           # Async SQLAlchemy engine + session factory
 │   ├── models/
-│   │   ├── user.py           # User (specialist/client) — table: users
-│   │   ├── invite.py         # Invite tokens — table: invites
-│   │   ├── context.py        # Case/client context — table: contexts
-│   │   ├── bot_chat_state.py # FSM state per (bot, chat) — table: bot_chat_state
-│   │   └── telegram_dedup.py # Dedup table — table: telegram_update_dedup
+│   │   ├── user.py                    # User (specialist/client) — table: users
+│   │   ├── invite.py                  # Invite tokens — table: invites
+│   │   ├── context.py                 # Case/client context — table: contexts
+│   │   ├── bot_chat_state.py          # FSM state per (bot, chat) — table: bot_chat_state
+│   │   ├── telegram_dedup.py          # Dedup table — table: telegram_update_dedup
+│   │   └── screening_assessment.py    # Screen v2 assessment — table: screening_assessment ✅
 │   ├── webhooks/
 │   │   ├── router_factory.py    # Generic webhook router factory (shared pipeline)
 │   │   ├── common.py            # Shared logic: secret verify, dedup, FSM load/save
 │   │   ├── pro.py               # Pro bot handler (Phase 2 — full implementation)
 │   │   ├── interpretator.py     # Interpretator bot (Phase 4 ✅ migrated)
 │   │   ├── conceptualizator.py  # Conceptualizator bot (Phase 4 ✅ migrated)
-│   │   └── stubs.py             # Screen/Simulator (stubs)
+│   │   ├── screen.py            # Screen v2 bot — full FSM handler ✅
+│   │   ├── simulator.py         # Simulator bot — full FSM handler ✅
+│   │   └── stubs.py             # (пустой — все боты мигрированы)
 │   ├── services/
 │   │   ├── interpreter/         # Interpreter service modules
-│   │   └── conceptualizer/      # Conceptualizer service modules
-│   │       ├── enums.py         #   SessionStateEnum, HypothesisType, PsycheLevelEnum, …
-│   │       ├── models.py        #   Pydantic v2: SessionState, Hypothesis, LayerA/B/C, …
-│   │       ├── decision_policy.py #  PriorityChecker + QuestionGenerator + selector
-│   │       ├── analysis.py      #   Async hypothesis extraction via Claude
-│   │       └── output.py        #   Async three-layer output assembly via Claude
+│   │   ├── conceptualizer/      # Conceptualizer service modules
+│   │   │   ├── enums.py         #   SessionStateEnum, HypothesisType, PsycheLevelEnum, …
+│   │   │   ├── models.py        #   Pydantic v2: SessionState, Hypothesis, LayerA/B/C, …
+│   │   │   ├── decision_policy.py #  PriorityChecker + QuestionGenerator + selector
+│   │   │   ├── analysis.py      #   Async hypothesis extraction via Claude
+│   │   │   └── output.py        #   Async three-layer output assembly via Claude
+│   │   ├── screen/              # Screen v2 service modules ✅
+│   │   │   ├── engine.py        #   ScreeningEngine: vector aggregation, tension matrix, rigidity, confidence ✅
+│   │   │   ├── weight_matrix.py #   PHASE1_SCREENS (6) + PHASE2_TEMPLATES (20 nodes) with axis/layer weights ✅
+│   │   │   ├── screen_bank.py   #   get_phase1_screen / get_phase2_template / get_all_phase2_nodes ✅
+│   │   │   ├── prompts.py       #   5 Claude prompts (router/constructor/report/session_bridge/stop) + assemble_prompt() ✅
+│   │   │   ├── orchestrator.py  #   ScreenOrchestrator: 3-phase flow, Claude routing, stop decision ✅
+│   │   │   └── report.py        #   generate_full_report / format_report_txt / generate_report_docx ✅
+│   │   └── simulator/           # Simulator service modules ✅
+│   │       ├── schemas.py       #   Pydantic v2: SessionData, FSMState, SpecialistProfile, TSIComponents, …
+│   │       ├── cases.py         #   BUILTIN_CASES (3 встроенных кейса)
+│   │       ├── goals.py         #   GOAL_LABELS, MODE_LABELS
+│   │       ├── system_prompt.py #   build_system_prompt(case, goal, mode) → str
+│   │       ├── formatter.py     #   parse_claude_response, format_for_telegram, build_iteration_log
+│   │       └── report_generator.py # generate_report_docx() → io.BytesIO
 │   └── utils/
 │       └── idempotency.py    # Idempotency key builder (format from Dev Spec Appendix C)
 ├── scripts/
 │   └── set_webhooks.py       # One-shot script to register webhooks with Telegram API
+├── tests/
+│   ├── __init__.py
+│   └── test_engine.py        # 31 unit tests for ScreeningEngine ✅
 ├── Procfile                  # Railway: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
 ├── requirements.txt
 └── .gitignore
@@ -59,10 +79,10 @@ psycheos-production/
 | Bot ID            | Role                  | Status       | Handler file      |
 |-------------------|-----------------------|--------------|-------------------|
 | `pro`             | Specialist management | Phase 2 done       | `webhooks/pro.py`             |
-| `screen`          | Client-facing         | Stub (Phase 4)     | `webhooks/stubs.py`           |
+| `screen`          | Client-facing         | **Phase 4 ✅ done** | `webhooks/screen.py`          |
 | `interpretator`   | AI diagnostic tool    | **Phase 4 ✅ done** | `webhooks/interpretator.py`  |
 | `conceptualizator`| Conceptualization     | **Phase 4 ✅ done** | `webhooks/conceptualizator.py` |
-| `simulator`       | Simulation            | Phase 4 next       | `webhooks/stubs.py`           |
+| `simulator`       | Simulation            | **Phase 4 ✅ done** | `webhooks/simulator.py`       |
 
 Each bot has its own Telegram token and webhook secret, all in env vars.
 
@@ -134,6 +154,19 @@ POST /webhook/{bot_id}
 
 ---
 
+## Interpretator Bot FSM States
+
+| State               | Trigger                             | Description                                                   |
+|---------------------|-------------------------------------|---------------------------------------------------------------|
+| `active`            | `/start {jti}` verified             | Session open; awaiting first material from specialist         |
+| `intake`            | Claude asks clarifying Q in INTAKE  | Awaiting specialist's answer before material check            |
+| `clarification_loop`| `completeness != "sufficient"`      | Material partial/fragmentary; Claude asks phenomenological Qs (max 2 iterations) |
+| `completed`         | Interpretation sent                 | Session closed; further messages rejected                     |
+
+Flow: `active` → specialist types material → `_run_intake` (Claude INTAKE prompt, may set `intake`) → `_run_material_check` (Claude MATERIAL_CHECK prompt) → if sufficient: `_run_interpretation`; else → `clarification_loop` (Claude CLARIFICATION_LOOP prompt, max 2 rounds) → `_run_interpretation` → `completed`.
+
+---
+
 ## Configuration (Environment Variables)
 
 All settings are loaded via pydantic-settings from `.env` file (never committed).
@@ -197,6 +230,8 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 Tables are created automatically on startup via `Base.metadata.create_all` (lifespan event). No migrations needed for new local environments.
+
+**Alembic migrations (production):** На данный момент существует только одна миграция — `0001_create_link_tokens.py`. Таблица `screening_assessment` создана через `create_all` (не через Alembic). Перед следующим `alembic upgrade head` нужно сгенерировать `0002_create_screening_assessment.py`.
 
 ### Database Migrations (Alembic)
 
@@ -302,9 +337,9 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 | 1     | Project skeleton, DB schema, webhook pipeline                                      | Done            |
 | 2     | Pro bot: invite-only registration, cases, admin panel                              | Done            |
 | 3     | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | **Done**        |
-| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **In progress** (2/4 done: Interpretator ✅ Conceptualizator ✅) |
-| 5     | Claude AI integration for analysis tools                                           | Planned         |
-| 6     | Client-side (Screen bot) session flow                                              | Planned         |
+| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **COMPLETE** ✅ (все 5 ботов мигрированы)                                       |
+| 5     | Interpreter Claude gaps: `_run_material_check` + `clarification_loop` FSM state + `clarifications_received` | **COMPLETE** ✅ |
+| 6     | Screen bot: bug fix `_notify_specialist` + `asked_nodes` dedup + UX (typing, phase transitions, Phase 1 progress) | **COMPLETE** ✅ |
 | 7     | Billing (Telegram Stars)                                                           | Planned         |
 
 ---
@@ -324,10 +359,10 @@ No authentication required. Used by Railway for healthchecks.
 | Бот              | Статус                    | Примечание                                                                                                    |
 |------------------|---------------------------|---------------------------------------------------------------------------------------------------------------|
 | Pro              | Требует v2                | Центральный хаб: регистрация, оплата, выход на остальные боты (tool-боты), ИИ-справочник по системе. Текущая версия не адаптирована под продакшн |
-| Screen           | Требует v2                | Поменялся банк вопросов, шкалы и логика работы. Нужна переделка                                              |
-| Interpreter      | ✅ Мигрирован (Phase 4)   | `app/webhooks/interpretator.py`; оригинал: `./psycheos-interpreter`                                          |
+| Screen           | ✅ Phase 6 DONE           | Steps 1–9 ✅ + bug fix `_notify_specialist` + `asked_nodes` dedup + UX (typing, phase transitions, Phase 1 progress "Вопрос N из 6") |
+| Interpreter      | ✅ Phase 5 DONE           | `app/webhooks/interpretator.py`; все Claude-гэпы закрыты: material_check + clarification_loop + clarifications_received |
 | Conceptualizer   | ✅ Мигрирован (Phase 4)   | `app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`; оригинал: `./psycheos-conceptualizer`  |
-| Simulator        | Следующий               | Оригинал ожидается в `./psycheos-simulator`                                                                  |
+| Simulator        | ✅ Мигрирован (Phase 4)   | `app/webhooks/simulator.py` + `app/services/simulator/`; оригинал: `./psycheos-simulator`                   |
 
 ---
 
@@ -335,9 +370,27 @@ No authentication required. Used by Railway for healthchecks.
 
 1. ✅ Interpreter — мигрирован (`app/webhooks/interpretator.py`)
 2. ✅ Conceptualizer — мигрирован (`app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`)
-3. 🔄 Simulator — следующий (`./psycheos-simulator`, ожидается загрузка)
-4. ⬜ Screen v2 — новый банк вопросов + логика
-5. ⬜ Pro v2 — зависит от всех остальных ботов
+3. ✅ Screen v2 — ЗАВЕРШЁН:
+   - ✅ Step 1: DB model `screening_assessment`
+   - ✅ Step 2: `app/services/screen/engine.py` — ScreeningEngine (31 тест, 31 pass)
+   - ✅ Step 3: `weight_matrix.py` (6 экранов, 20 узлов) + `screen_bank.py`
+   - ✅ Step 4: `prompts.py` — 5 Claude промптов + `assemble_prompt()`
+   - ✅ Step 5: `orchestrator.py` — ScreenOrchestrator (3 фазы, Claude routing, stop decision)
+   - ✅ Step 6: `report.py` — generate_full_report / format_report_txt / generate_report_docx
+   - ✅ Step 7: `webhooks/screen.py` — полный FSM-обработчик клиентского бота
+   - ✅ Step 8: `webhooks/pro.py` — screen_menu/create/results коллбэки; кнопка «📊 Скрининг»
+   - ✅ Step 9: `main.py` + `models/__init__.py` — интеграция Screen v2
+4. ✅ Simulator — мигрирован (`app/webhooks/simulator.py` + `app/services/simulator/`)
+5. ✅ Interpreter — Claude-гэпы закрыты (Phase 5):
+   - ✅ Gap 3: `clarifications_received[]` заполняется при ответах в состояниях `intake` и `clarification_loop`
+   - ✅ Gap 1: `_run_material_check()` с `MATERIAL_CHECK_PROMPT`; JSON-ответ `completeness`; роутинг в `clarification_loop` если не "sufficient"
+   - ✅ Gap 2: FSM-состояние `clarification_loop` с `CLARIFICATION_LOOP_PROMPT`; max 2 итерации, затем fallthrough в `_run_interpretation`
+6. ✅ Screen — UX/bug fixes (Phase 6):
+   - ✅ Fix 1: `_notify_specialist` — брать `specialist_user_id` (BigInteger Telegram ID) из `ScreeningAssessment`, не из `Context`
+   - ✅ Fix 2: `asked_nodes` dedup — `node`+`phase` в `response_history`; Phase 2/3 routing исключает уже заданные узлы
+   - ✅ Fix 3: `send_chat_action("typing")` + `⏳ Анализирую...` перед генерацией отчёта
+   - ✅ Fix 4: Сообщения при переходе между фазами (phase1→phase2, phase2→phase3)
+   - ✅ Fix 5: `_show_multi_select(header=...)` — "📋 Вопрос N из 6" в Phase 1
 
 ---
 
@@ -354,6 +407,18 @@ No authentication required. Used by Railway for healthchecks.
 - **Callback pattern в Pro:** `launch_{service_id}_{context_id}` (split по `_` с maxsplit=2, UUID без изменений)
 - **run_id в FSM:** после успешного verify сохраняется в `BotChatState.state_payload["run_id"]`; `context_id` — в `BotChatState.context_id`
 - **subject_id=0:** открытый токен для клиентского Screen — telegram_id клиента неизвестен в момент выдачи; `verify_link` пропускает проверку subject_id если `token.subject_id == 0`
-- **Callback для клиентской ссылки:** `screen_link_{context_id}` (отдельный паттерн от `launch_`, т.к. разные role и subject_id)
+- **Screen v2 callback pattern в Pro:** `screen_menu_{context_id}` → статус + кнопки; `screen_create_{context_id}` → создать ScreeningAssessment + token; `screen_results_{assessment_id}` → отправить txt/json/docx
+- **Screen FSM states:** `idle/None` → `/start {jti}` → verify token + load assessment; `active` → start_screening; `phase1/phase2/phase3` → toggle_{i} + confirm_selection; `completed` → финал
+- **specialist_user_id в ScreeningAssessment:** Telegram ID специалиста (BigInteger), используется для уведомления через Pro-бота при завершении скрининга
 - **Хранение сессии в tool-ботах:** Redis отсутствует; полное состояние сессии (Pydantic-модель) сериализуется в `state_payload["session"]` через `model.model_dump(mode="json")` и восстанавливается через `Model.model_validate(data)`. `bot_chat_state.state` дублирует `session.state.value` для маршрутизации без десериализации
 - **Pydantic v2:** все сервисные модели (`app/services/*/models.py`) используют Pydantic v2 API (`model_dump`, `model_validate`). Совместимость v1-стиля (`class Config`) в оригинальных ботах не переносится
+- **Simulator FSM states:** `setup` (setup_step: mode→case→goal / upload→crisis→goal_practice) → `active` (реплики специалиста → Claude) → `complete`; сессия в `state_payload["session"]` (SessionData), профиль в `state_payload["profile"]` (SpecialistProfile, накопительно)
+- **Simulator report:** `generate_report_docx()` возвращает `io.BytesIO` (не путь к файлу); отправляется через `InputFile(buf, filename=...)` как `.docx`
+- **Simulator PRACTICE mode:** `custom_prompt` (system prompt + данные специалиста) хранится в `state_payload["custom_prompt"]`; при каждом запросе к Claude берётся оттуда
+- **screening_assessment и Alembic:** таблица `screening_assessment` не имеет Alembic-миграции — создаётся через `Base.metadata.create_all` при старте. Миграции Alembic: существует только `0001_create_link_tokens.py`. Следующая генерация: `alembic revision --autogenerate -m "add screening_assessment"` → `0002_...`
+- **Claude model (Phase 4):** все tool-боты (Simulator, Conceptualizer, Interpreter, Screen report) используют `claude-sonnet-4-5-20250929` через `AsyncAnthropic` напрямую (не через обёртку). Модель задаётся константой `_ANTHROPIC_MODEL` в каждом модуле.
+- **Interpreter FSM states (Phase 5):** `active` → specialist types → `_run_intake` (может перейти в `intake` если Claude задал уточняющий вопрос) → `_run_material_check` (completeness: "sufficient" | "partial" | "fragmentary") → если sufficient: `_run_interpretation` → `completed`; иначе → `clarification_loop` (max `_MAX_CLARIFICATION_ITERATIONS = 2` итерации, затем принудительный fallthrough в interpretation). `clarifications_received[]` в payload накапливает ответы специалиста в обоих состояниях `intake` и `clarification_loop`.
+- **Interpreter `_run_material_check` JSON parsing:** Claude получает инструкцию вернуть `{"completeness": "sufficient|partial|fragmentary", "message": "..."}` — парсинг через `_parse_completeness()` с JSON-first, keyword-fallback (fragmentary / partial / default sufficient) подходом.
+- **Screen `asked_nodes` deduplication (Phase 6):** каждый entry в `response_history` дополнен полями `node` (str) и `phase` (int). ScreeningEngine игнорирует лишние ключи (читает только `axis_weights`/`layer_weights` через `.get()`). `_asked_nodes(state)` извлекает set узлов из response_history где phase in (2, 3). `_fallback_node(state, exclude)` итерирует сначала ambiguity_zones, затем all_nodes, пропуская exclude; при исчерпании — wrap к первому узлу. Phase 2/3 routing принимает Claude-предложение только если оно не в exclude.
+- **Screen `_show_multi_select` header (Phase 6):** опциональный параметр `header: str | None = None`; если задан — prepend к тексту вопроса как `"{header}\n\n{question}"`. В Phase 1 оба call-site передают `f"📋 Вопрос {screen_index + 1} из 6"`. Phase 2/3 передают `None` (переменная длина фаз).
+- **Screen `_notify_specialist` fix (Phase 6):** функция принимает `assessment_id_str` + `context_id`; загружает `ScreeningAssessment` по UUID, берёт `assessment.specialist_user_id` (BigInteger Telegram ID) для `chat_id` в Pro-боте. `Context` загружается отдельно только для получения `client_ref` (label). `Context.specialist_user_id` — UUID FK, НЕ Telegram ID.

@@ -16,7 +16,7 @@ from app.webhooks.pro import handle_pro
 from app.webhooks.interpretator import handle_interpretator
 from app.webhooks.conceptualizator import handle_conceptualizator
 from app.webhooks.simulator import handle_simulator
-from app.webhooks.stubs import handle_screen
+from app.webhooks.screen import handle_screen
 from app.routers.links import router as links_router
 
 # --- Logging ---
