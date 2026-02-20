@@ -204,7 +204,9 @@ async def handle_text(
     user = await get_user_by_tg(db, user_id)
     if user:
         await bot.send_message(
-            chat_id=chat_id, text="Используйте меню:", reply_markup=main_menu_kb(),
+            chat_id=chat_id,
+            text="Используйте меню или 📚 Справочник для вопросов о системе PsycheOS.",
+            reply_markup=main_menu_kb(),
         )
     else:
         await bot.send_message(
