@@ -5,5 +5,10 @@ from app.models.invite import Invite
 from app.models.context import Context
 from app.models.link_token import LinkToken
 from app.models.artifact import Artifact
+from app.models.job import Job
+from app.models.outbox_message import OutboxMessage
 
-__all__ = ["User", "BotChatState", "TelegramUpdateDedup", "Invite", "Context", "LinkToken", "Artifact"]
+__all__ = [
+    "User", "BotChatState", "TelegramUpdateDedup", "Invite",
+    "Context", "LinkToken", "Artifact", "Job", "OutboxMessage",
+]
