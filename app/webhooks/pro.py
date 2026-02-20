@@ -27,6 +27,7 @@ from app.models.bot_chat_state import BotChatState
 from app.models.user import User
 from app.models.invite import Invite
 from app.models.context import Context
+from app.models.artifact import Artifact
 from app.services.links import issue_link
 from app.services.pro.reference_prompt import REFERENCE_SYSTEM_PROMPT
 
@@ -128,10 +129,18 @@ def case_tools_kb(context_id: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🧠 Интерпретатор",    callback_data=f"launch_interpretator_{context_id}")],
         [InlineKeyboardButton("💡 Концептуализатор", callback_data=f"launch_conceptualizator_{context_id}")],
         [InlineKeyboardButton("🎭 Симулятор",        callback_data=f"launch_simulator_{context_id}")],
+        [InlineKeyboardButton("📊 История результатов", callback_data=f"case_artifacts_{context_id}")],
         [InlineKeyboardButton("📤 Ссылка для клиента", callback_data=f"screen_link_{context_id}")],
         [InlineKeyboardButton("🗄 Архивировать",     callback_data=f"case_archive_{context_id}")],
         [InlineKeyboardButton("◀️ Мои кейсы",       callback_data="cases_list")],
     ])
+
+
+_SERVICE_LABEL = {
+    "interpretator": "🧠 Интерпретация",
+    "conceptualizator": "💡 Концептуализация",
+    "simulator": "🎭 Симуляция",
+}
 
 
 # ──────────────────── Main Handler ────────────────────
@@ -319,6 +328,16 @@ async def handle_callback(
             text="Введите название/метку для кейса\n(например, имя клиента или код):",
             reply_markup=back_to_main_kb(),
         )
+        return
+
+    if data.startswith("case_artifacts_"):
+        context_id_str = data[len("case_artifacts_"):]
+        await show_case_artifacts(query, db, context_id_str)
+        return
+
+    if data.startswith("artifact_"):
+        artifact_id_str = data[len("artifact_"):]
+        await show_artifact_detail(query, db, artifact_id_str)
         return
 
     if data.startswith("case_") and data != "case_new":
@@ -707,5 +726,85 @@ async def create_invite_with_note(bot, db, chat_id, user_id, note):
              f"Использований: 1\n\n"
              f"Ссылка:\n`{link}`",
         reply_markup=admin_menu_kb(), parse_mode="Markdown",
+    )
+
+
+# ──────────────────── Artifacts UI ────────────────────
+
+async def show_case_artifacts(query, db: AsyncSession, context_id_str: str) -> None:
+    """Show list of artifacts for a case (newest first, max 10)."""
+    try:
+        context_id = uuid.UUID(context_id_str)
+    except ValueError:
+        await query.edit_message_text("Неверный ID кейса.", reply_markup=back_to_main_kb())
+        return
+
+    result = await db.execute(
+        select(Artifact)
+        .where(Artifact.context_id == context_id)
+        .order_by(Artifact.created_at.desc())
+        .limit(10)
+    )
+    artifacts = result.scalars().all()
+
+    back_btn = InlineKeyboardButton("◀️ К кейсу", callback_data=f"case_{context_id_str}")
+
+    if not artifacts:
+        await query.edit_message_text(
+            "📊 *История результатов*\n\nПо этому кейсу ещё нет сохранённых артефактов.\n\n"
+            "_Артефакты появятся после завершения сессии в инструментах._",
+            reply_markup=InlineKeyboardMarkup([[back_btn]]),
+            parse_mode="Markdown",
+        )
+        return
+
+    buttons = []
+    for a in artifacts:
+        label = _SERVICE_LABEL.get(a.service_id, a.service_id)
+        date_str = a.created_at.strftime("%d.%m.%y")
+        buttons.append([InlineKeyboardButton(
+            f"{label}  {date_str}",
+            callback_data=f"artifact_{a.artifact_id}",
+        )])
+    buttons.append([back_btn])
+
+    await query.edit_message_text(
+        f"📊 *История результатов*\n\nВсего: {len(artifacts)} запись(ей). Нажмите для просмотра.",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="Markdown",
+    )
+
+
+async def show_artifact_detail(query, db: AsyncSession, artifact_id_str: str) -> None:
+    """Show summary of a single artifact with a back-to-list button."""
+    try:
+        artifact_id = uuid.UUID(artifact_id_str)
+    except ValueError:
+        await query.edit_message_text("Неверный ID артефакта.", reply_markup=back_to_main_kb())
+        return
+
+    result = await db.execute(
+        select(Artifact).where(Artifact.artifact_id == artifact_id)
+    )
+    a = result.scalar_one_or_none()
+    if a is None:
+        await query.edit_message_text("Артефакт не найден.", reply_markup=back_to_main_kb())
+        return
+
+    label = _SERVICE_LABEL.get(a.service_id, a.service_id)
+    date_str = a.created_at.strftime("%d.%m.%Y %H:%M")
+    summary_text = a.summary or "_Краткое описание недоступно._"
+
+    context_id_str = str(a.context_id)
+    back_btn = InlineKeyboardButton(
+        "◀️ К списку", callback_data=f"case_artifacts_{context_id_str}"
+    )
+
+    await query.edit_message_text(
+        f"📊 *{label}*\n\n"
+        f"🗓 {date_str}\n\n"
+        f"{summary_text}",
+        reply_markup=InlineKeyboardMarkup([[back_btn]]),
+        parse_mode="Markdown",
     )
 
