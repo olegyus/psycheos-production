@@ -89,6 +89,7 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📋 Мои кейсы", callback_data="cases_list")],
         [InlineKeyboardButton("➕ Новый кейс", callback_data="case_new")],
+        [InlineKeyboardButton("📚 Справочник", callback_data="open_reference")],
     ])
 
 
