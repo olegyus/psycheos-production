@@ -10,7 +10,7 @@ PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for 
 - **AI**: Anthropic Claude API (integrated in future phases)
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
-- **Current phase**: Phase 4 done (Interpretator ✅ Conceptualizator ✅) + Sprint B done (Pro Справочник ✅) → Phase 5 Artifacts next
+- **Current phase**: Phase 5 done (Artifacts ✅) → Phase 6 Screen v2 next
 
 ---
 
@@ -27,7 +27,9 @@ psycheos-production/
 │   │   ├── invite.py         # Invite tokens — table: invites
 │   │   ├── context.py        # Case/client context — table: contexts
 │   │   ├── bot_chat_state.py # FSM state per (bot, chat) — table: bot_chat_state
-│   │   └── telegram_dedup.py # Dedup table — table: telegram_update_dedup
+│   │   ├── telegram_dedup.py # Dedup table — table: telegram_update_dedup
+│   │   ├── link_token.py     # Link tokens (Phase 3) — table: link_tokens
+│   │   └── artifact.py       # Tool-bot outputs (Phase 5) — table: artifacts
 │   ├── webhooks/
 │   │   ├── router_factory.py    # Generic webhook router factory (shared pipeline)
 │   │   ├── common.py            # Shared logic: secret verify, dedup, FSM load/save
@@ -47,6 +49,9 @@ psycheos-production/
 │   │       └── reference_prompt.py  #   REFERENCE_SYSTEM_PROMPT (loads key_psycheos.md)
 │   ├── data/
 │   │   └── key_psycheos.md      # PsycheOS theory base — used by reference chat system prompt
+│   ├── routers/
+│   │   ├── links.py          # POST /v1/links/issue|verify (Phase 3)
+│   │   └── artifacts.py      # GET /v1/artifacts[/{id}] (Phase 5)
 │   └── utils/
 │       └── idempotency.py    # Idempotency key builder (format from Dev Spec Appendix C)
 ├── scripts/
@@ -104,6 +109,18 @@ Each bot has its own Telegram token and webhook secret, all in env vars.
 ### `telegram_update_dedup` — Exactly-once processing
 - PK: `(bot_id, update_id)` — prevents double-processing on webhook retries
 - INSERT ... ON CONFLICT DO NOTHING — if rowcount=0 → duplicate, skip
+
+### `artifacts` — Persisted tool-bot session outputs (Phase 5)
+- `artifact_id` UUID PK (gen_random_uuid)
+- `context_id` UUID FK → `contexts.context_id` ON DELETE CASCADE
+- `service_id` VARCHAR — `"interpretator"` | `"conceptualizator"` | `"simulator"`
+- `run_id` UUID — = `link_token.jti`; idempotency key per session
+- `specialist_telegram_id` BigInteger — denormalised Telegram ID (avoids user JOIN)
+- `payload` JSONB — full structured output (service-specific)
+- `summary` TEXT nullable — 1-2 line description shown in Pro bot list
+- `created_at` TIMESTAMPTZ
+- UNIQUE(run_id, service_id) — one artifact per run, idempotent on retry
+- INDEX(context_id, created_at DESC) — primary list access pattern
 
 ---
 
@@ -309,7 +326,7 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 | 3          | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | ✅ Done         |
 | 4          | Screen/Interpretator/Conceptualizator/Simulator full logic                         | ✅ Done (Interpretator + Conceptualizator ✅; Simulator migrated ✅) |
 | Sprint B   | Pro bot reference chat — Claude Haiku Q&A on PsycheOS theory                      | ✅ Done         |
-| **5**      | **Artifacts — persistent storage of tool outputs; HTTP API; Pro bot integration**  | **Next**        |
+| **5**      | **Artifacts — persistent storage of tool outputs; HTTP API; Pro bot integration**  | ✅ **Done**     |
 | 6          | Screen v2 — new question bank, scales, client session flow                         | Planned         |
 | 7          | Pro v2 — billing (Telegram Stars), full hub integration                            | Planned         |
 
@@ -343,7 +360,7 @@ No authentication required. Used by Railway for healthchecks.
 2. ✅ Conceptualizer — мигрирован (`app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`)
 3. ✅ Simulator — мигрирован (`app/webhooks/simulator.py`)
 4. ✅ Sprint B — Pro Справочник (`app/services/pro/reference_prompt.py`, `reference_chat` FSM)
-5. 🔄 **Phase 5 — Artifacts** (таблица artifacts, HTTP API, интеграция в Pro и tool-боты)
+5. ✅ **Phase 5 — Artifacts** (`artifacts` table, `save_artifact` service, hooks in 3 bots, `GET /v1/artifacts` API, Pro bot UI)
 6. ⬜ Phase 6 — Screen v2 — новый банк вопросов + логика
 7. ⬜ Phase 7 — Pro v2 — биллинг (Telegram Stars), Hub
 
@@ -368,3 +385,8 @@ No authentication required. Used by Railway for healthchecks.
 - **Reference chat history:** хранится в `state_payload["reference_history"]` как список `{"role": "user"|"assistant", "content": str}`. Передаётся в Claude API полностью при каждом запросе (windowed: последние 10 пар). Ошибка API → user-friendly сообщение + логирование; история при ошибке тоже сохраняется
 - **reference_prompt.py:** загружает `app/data/key_psycheos.md` один раз при импорте модуля (`_THEORY_FILE.read_text()`). `REFERENCE_SYSTEM_PROMPT` — строковая константа. Обновление теоретической базы = обновление файла + редеплой
 - **Модель для Справочника:** `claude-haiku-4-5-20251001`, `max_tokens=1024`. Haiku выбран как token-efficient для FAQ-паттерна; при необходимости глубокой аналитики — заменить на Sonnet
+- **Artifacts — idempotency:** `UNIQUE(run_id, service_id)` + `INSERT ... ON CONFLICT DO NOTHING`. `run_id` = `link_token.jti` (UUID). Повторный webhook-вызов → тихое игнорирование дубля. `save_artifact` не бросает исключений — ошибки логируются, обработчик продолжает работу
+- **Artifacts — specialist_telegram_id:** денормализованный BigInteger (Telegram ID). Избегает JOIN с `users` в tool-ботах; Pro bot фильтрует по `context_id`, не по `specialist_telegram_id`
+- **Artifacts — payload structure:** интерпретатор: `{meta, txt_report, structured}`. Концептуализатор: `{layer_a, layer_b, layer_c, meta}`. Симулятор: `{tsi, cci, session_turns, report_text, profile}`. `report_text` в симуляторе сохраняется в обоих путях (.docx и fallback)
+- **Artifacts — Pro UI routing:** `case_artifacts_{context_id}` и `artifact_{artifact_id}` обрабатываются **до** generic `if data.startswith("case_")` — иначе `case_artifacts_` перехватывается generic-обработчиком. Всегда добавлять специфичные `startswith` паттерны выше generic
+- **Artifacts — HTTP API:** `GET /v1/artifacts?context_id=...` → список (без payload, max 20). `GET /v1/artifacts/{artifact_id}` → полный артефакт с payload. Авторизация отсутствует (внутренний API, аналогично `/v1/links/*`)
