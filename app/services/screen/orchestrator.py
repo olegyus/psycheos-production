@@ -170,6 +170,8 @@ class ScreenOrchestrator:
             response = {
                 "axis_weights": option["axis_weights"],
                 "layer_weights": option["layer_weights"],
+                "node": current_screen.get("node"),  # tracked for dedup
+                "phase": 2,
             }
             state = self.engine.process_response(state, response)
 
@@ -215,6 +217,8 @@ class ScreenOrchestrator:
             response = {
                 "axis_weights": option["axis_weights"],
                 "layer_weights": option["layer_weights"],
+                "node": current_screen.get("node"),  # tracked for dedup
+                "phase": 3,
             }
             state = self.engine.process_response(state, response)
 
@@ -235,6 +239,7 @@ class ScreenOrchestrator:
 
     async def _select_next_phase2_question(self, state: dict) -> dict:
         """Use Claude (haiku) to pick the best ambiguity node to explore."""
+        asked = self._asked_nodes(state)
         context = {
             "AxisVector": state.get("axis_vector", {}),
             "LayerVector": state.get("layer_vector", {}),
@@ -251,11 +256,16 @@ class ScreenOrchestrator:
             model=_HAIKU,
         )
 
-        selected_node = self._fallback_node(state)
+        selected_node = self._fallback_node(state, exclude=asked)
         if raw:
             try:
                 data = _parse_json(raw)
-                selected_node = data["selected_node"]
+                candidate = data["selected_node"]
+                # Accept Claude's choice only if not already asked
+                if candidate not in asked:
+                    selected_node = candidate
+                else:
+                    logger.debug("[screen] Router proposed already-asked node %s; using fallback", candidate)
             except Exception:
                 logger.warning("[screen] Router JSON parse failed; using fallback node")
 
@@ -276,8 +286,8 @@ class ScreenOrchestrator:
 
     async def _select_next_phase3_question(self, state: dict) -> dict:
         """Use Claude (sonnet) to construct a deeper adaptive question."""
-        # Pick the top ambiguity node as the diagnostic target
-        selected_node = self._fallback_node(state)
+        asked = self._asked_nodes(state)
+        selected_node = self._fallback_node(state, exclude=asked)
         try:
             template = screen_bank.get_phase2_template(selected_node)
         except KeyError:
@@ -446,16 +456,28 @@ class ScreenOrchestrator:
         )
         await self.db.flush()
 
-    def _fallback_node(self, state: dict) -> str:
-        """Return the first ambiguity zone node, or first available Phase 2 node."""
-        zones = state.get("ambiguity_zones", [])
-        if zones:
-            # zones format: "A{j}_L{k}" — matches Phase 2 template keys
-            node = zones[0]
-            all_nodes = screen_bank.get_all_phase2_nodes()
-            if node in all_nodes:
+    def _asked_nodes(self, state: dict) -> set[str]:
+        """Return the set of Phase 2/3 node IDs already answered (from response_history)."""
+        return {
+            r["node"]
+            for r in state.get("response_history", [])
+            if r.get("phase") in (2, 3) and r.get("node")
+        }
+
+    def _fallback_node(self, state: dict, exclude: set[str] | None = None) -> str:
+        """Return the best unanswered ambiguity node, or any unanswered Phase 2 node."""
+        exclude = exclude or set()
+        all_nodes = screen_bank.get_all_phase2_nodes()
+        # Prefer ambiguity zones (most diagnostic) — skip already asked
+        for node in state.get("ambiguity_zones", []):
+            if node not in exclude and node in all_nodes:
                 return node
-        return screen_bank.get_all_phase2_nodes()[0]
+        # Fall back to any Phase 2 node not yet asked
+        for node in all_nodes:
+            if node not in exclude:
+                return node
+        # All nodes exhausted (shouldn't happen with ≤8 questions vs 20 nodes) — wrap
+        return all_nodes[0]
 
 
 # ---------------------------------------------------------------------------
