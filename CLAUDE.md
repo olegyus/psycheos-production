@@ -10,7 +10,7 @@ PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for 
 - **AI**: Anthropic Claude API (integrated in future phases)
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
-- **Current phase**: Phase 4 in progress — Interpretator + Conceptualizator migrated (2/4 tool bots done)
+- **Current phase**: Phase 4 done (Interpretator ✅ Conceptualizator ✅) + Sprint B done (Pro Справочник ✅) → Phase 5 Artifacts next
 
 ---
 
@@ -37,12 +37,16 @@ psycheos-production/
 │   │   └── stubs.py             # Screen/Simulator (stubs)
 │   ├── services/
 │   │   ├── interpreter/         # Interpreter service modules
-│   │   └── conceptualizer/      # Conceptualizer service modules
-│   │       ├── enums.py         #   SessionStateEnum, HypothesisType, PsycheLevelEnum, …
-│   │       ├── models.py        #   Pydantic v2: SessionState, Hypothesis, LayerA/B/C, …
-│   │       ├── decision_policy.py #  PriorityChecker + QuestionGenerator + selector
-│   │       ├── analysis.py      #   Async hypothesis extraction via Claude
-│   │       └── output.py        #   Async three-layer output assembly via Claude
+│   │   ├── conceptualizer/      # Conceptualizer service modules
+│   │   │   ├── enums.py         #   SessionStateEnum, HypothesisType, PsycheLevelEnum, …
+│   │   │   ├── models.py        #   Pydantic v2: SessionState, Hypothesis, LayerA/B/C, …
+│   │   │   ├── decision_policy.py #  PriorityChecker + QuestionGenerator + selector
+│   │   │   ├── analysis.py      #   Async hypothesis extraction via Claude
+│   │   │   └── output.py        #   Async three-layer output assembly via Claude
+│   │   └── pro/                 # Pro bot services (Sprint B+)
+│   │       └── reference_prompt.py  #   REFERENCE_SYSTEM_PROMPT (loads key_psycheos.md)
+│   ├── data/
+│   │   └── key_psycheos.md      # PsycheOS theory base — used by reference chat system prompt
 │   └── utils/
 │       └── idempotency.py    # Idempotency key builder (format from Dev Spec Appendix C)
 ├── scripts/
@@ -58,11 +62,11 @@ psycheos-production/
 
 | Bot ID            | Role                  | Status       | Handler file      |
 |-------------------|-----------------------|--------------|-------------------|
-| `pro`             | Specialist management | Phase 2 done       | `webhooks/pro.py`             |
-| `screen`          | Client-facing         | Stub (Phase 4)     | `webhooks/stubs.py`           |
-| `interpretator`   | AI diagnostic tool    | **Phase 4 ✅ done** | `webhooks/interpretator.py`  |
-| `conceptualizator`| Conceptualization     | **Phase 4 ✅ done** | `webhooks/conceptualizator.py` |
-| `simulator`       | Simulation            | Phase 4 next       | `webhooks/stubs.py`           |
+| `pro`             | Specialist management | Phase 2 + Sprint B ✅ | `webhooks/pro.py`             |
+| `screen`          | Client-facing         | Stub (Phase 4 next)   | `webhooks/stubs.py`           |
+| `interpretator`   | AI diagnostic tool    | **Phase 4 ✅ done**   | `webhooks/interpretator.py`   |
+| `conceptualizator`| Conceptualization     | **Phase 4 ✅ done**   | `webhooks/conceptualizator.py`|
+| `simulator`       | Simulation            | Phase 4 (migrating)   | `webhooks/simulator.py`       |
 
 Each bot has its own Telegram token and webhook secret, all in env vars.
 
@@ -131,6 +135,7 @@ POST /webhook/{bot_id}
 | `admin_panel`        | `/admin` (admin only)           | Admin panel                        |
 | `waiting_case_name`  | "➕ Новый кейс" button          | Waiting for specialist to type case name |
 | `waiting_invite_note`| "🔗 Создать приглашение" button | Waiting for admin to type invite note |
+| `reference_chat`     | "📚 Справочник" button          | Multi-turn Q&A with Claude Haiku about PsycheOS theory; history in `state_payload["reference_history"]` (last 10 pairs) |
 
 ---
 
@@ -297,15 +302,16 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 
 ## Development Phases
 
-| Phase | Description                                                                        | Status          |
-|-------|------------------------------------------------------------------------------------|-----------------|
-| 1     | Project skeleton, DB schema, webhook pipeline                                      | Done            |
-| 2     | Pro bot: invite-only registration, cases, admin panel                              | Done            |
-| 3     | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | **Done**        |
-| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **In progress** (2/4 done: Interpretator ✅ Conceptualizator ✅) |
-| 5     | Claude AI integration for analysis tools                                           | Planned         |
-| 6     | Client-side (Screen bot) session flow                                              | Planned         |
-| 7     | Billing (Telegram Stars)                                                           | Planned         |
+| Phase      | Description                                                                        | Status          |
+|------------|------------------------------------------------------------------------------------|-----------------|
+| 1          | Project skeleton, DB schema, webhook pipeline                                      | ✅ Done         |
+| 2          | Pro bot: invite-only registration, cases, admin panel                              | ✅ Done         |
+| 3          | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | ✅ Done         |
+| 4          | Screen/Interpretator/Conceptualizator/Simulator full logic                         | ✅ Done (Interpretator + Conceptualizator ✅; Simulator migrated ✅) |
+| Sprint B   | Pro bot reference chat — Claude Haiku Q&A on PsycheOS theory                      | ✅ Done         |
+| **5**      | **Artifacts — persistent storage of tool outputs; HTTP API; Pro bot integration**  | **Next**        |
+| 6          | Screen v2 — new question bank, scales, client session flow                         | Planned         |
+| 7          | Pro v2 — billing (Telegram Stars), full hub integration                            | Planned         |
 
 ---
 
@@ -321,13 +327,13 @@ No authentication required. Used by Railway for healthchecks.
 
 ## Статус ботов (актуальный)
 
-| Бот              | Статус                    | Примечание                                                                                                    |
-|------------------|---------------------------|---------------------------------------------------------------------------------------------------------------|
-| Pro              | Требует v2                | Центральный хаб: регистрация, оплата, выход на остальные боты (tool-боты), ИИ-справочник по системе. Текущая версия не адаптирована под продакшн |
-| Screen           | Требует v2                | Поменялся банк вопросов, шкалы и логика работы. Нужна переделка                                              |
-| Interpreter      | ✅ Мигрирован (Phase 4)   | `app/webhooks/interpretator.py`; оригинал: `./psycheos-interpreter`                                          |
-| Conceptualizer   | ✅ Мигрирован (Phase 4)   | `app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`; оригинал: `./psycheos-conceptualizer`  |
-| Simulator        | Следующий               | Оригинал ожидается в `./psycheos-simulator`                                                                  |
+| Бот              | Статус                      | Примечание                                                                                                         |
+|------------------|-----------------------------|--------------------------------------------------------------------------------------------------------------------|
+| Pro              | ✅ Sprint B done            | Справочник PsycheOS (reference_chat, Claude Haiku, key_psycheos.md). v2 (биллинг, Hub) — Phase 7                 |
+| Screen           | Stub → Phase 6              | Новый банк вопросов, шкалы и логика работы — Phase 6                                                              |
+| Interpreter      | ✅ Мигрирован (Phase 4)     | `app/webhooks/interpretator.py`; отправляет .txt+.json в Telegram                                                 |
+| Conceptualizer   | ✅ Мигрирован (Phase 4)     | `app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`; Layer A/B/C в Telegram                       |
+| Simulator        | ✅ Мигрирован (Phase 4)     | `app/webhooks/simulator.py`; отправляет .docx-отчёт, TSI/CCI метрики                                             |
 
 ---
 
@@ -335,9 +341,11 @@ No authentication required. Used by Railway for healthchecks.
 
 1. ✅ Interpreter — мигрирован (`app/webhooks/interpretator.py`)
 2. ✅ Conceptualizer — мигрирован (`app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`)
-3. 🔄 Simulator — следующий (`./psycheos-simulator`, ожидается загрузка)
-4. ⬜ Screen v2 — новый банк вопросов + логика
-5. ⬜ Pro v2 — зависит от всех остальных ботов
+3. ✅ Simulator — мигрирован (`app/webhooks/simulator.py`)
+4. ✅ Sprint B — Pro Справочник (`app/services/pro/reference_prompt.py`, `reference_chat` FSM)
+5. 🔄 **Phase 5 — Artifacts** (таблица artifacts, HTTP API, интеграция в Pro и tool-боты)
+6. ⬜ Phase 6 — Screen v2 — новый банк вопросов + логика
+7. ⬜ Phase 7 — Pro v2 — биллинг (Telegram Stars), Hub
 
 ---
 
@@ -357,3 +365,6 @@ No authentication required. Used by Railway for healthchecks.
 - **Callback для клиентской ссылки:** `screen_link_{context_id}` (отдельный паттерн от `launch_`, т.к. разные role и subject_id)
 - **Хранение сессии в tool-ботах:** Redis отсутствует; полное состояние сессии (Pydantic-модель) сериализуется в `state_payload["session"]` через `model.model_dump(mode="json")` и восстанавливается через `Model.model_validate(data)`. `bot_chat_state.state` дублирует `session.state.value` для маршрутизации без десериализации
 - **Pydantic v2:** все сервисные модели (`app/services/*/models.py`) используют Pydantic v2 API (`model_dump`, `model_validate`). Совместимость v1-стиля (`class Config`) в оригинальных ботах не переносится
+- **Reference chat history:** хранится в `state_payload["reference_history"]` как список `{"role": "user"|"assistant", "content": str}`. Передаётся в Claude API полностью при каждом запросе (windowed: последние 10 пар). Ошибка API → user-friendly сообщение + логирование; история при ошибке тоже сохраняется
+- **reference_prompt.py:** загружает `app/data/key_psycheos.md` один раз при импорте модуля (`_THEORY_FILE.read_text()`). `REFERENCE_SYSTEM_PROMPT` — строковая константа. Обновление теоретической базы = обновление файла + редеплой
+- **Модель для Справочника:** `claude-haiku-4-5-20251001`, `max_tokens=1024`. Haiku выбран как token-efficient для FAQ-паттерна; при необходимости глубокой аналитики — заменить на Sonnet
