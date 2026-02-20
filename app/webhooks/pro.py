@@ -113,6 +113,12 @@ def back_to_admin_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def exit_reference_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("◀️ Выйти из справочника", callback_data="exit_reference")],
+    ])
+
+
 def case_tools_kb(context_id: str) -> InlineKeyboardMarkup:
     """Keyboard for case view — tool launch buttons + archive + back."""
     return InlineKeyboardMarkup([
@@ -198,6 +204,11 @@ async def handle_text(
     # ── FSM: waiting for invite note ──
     if state and state.state == "waiting_invite_note":
         await create_invite_with_note(bot, db, chat_id, user_id, text)
+        return
+
+    # ── FSM: reference chat ──
+    if state and state.state == "reference_chat":
+        await handle_reference_chat(bot, db, state, chat_id, user_id, text)
         return
 
     # ── Default ──
@@ -381,6 +392,33 @@ async def handle_callback(
         await handle_screen_link(query, bot, db, chat_id, user_id, context_id_str)
         return
 
+    # ── Reference chat ──
+    if data == "open_reference":
+        user = await get_user_by_tg(db, user_id)
+        if not user:
+            await query.answer("Нет доступа.", show_alert=True)
+            return
+        await upsert_chat_state(
+            db, "pro", chat_id, "reference_chat", user_id=user_id,
+            state_payload={"reference_history": []},
+        )
+        await query.edit_message_text(
+            text="📚 *Справочник PsycheOS*\n\n"
+                 "Задайте вопрос о модели — я объясню концепции, термины и логику инструментов.\n\n"
+                 "_Я не даю клинических рекомендаций по конкретным клиентам._",
+            reply_markup=exit_reference_kb(),
+            parse_mode="Markdown",
+        )
+        return
+
+    if data == "exit_reference":
+        await upsert_chat_state(db, "pro", chat_id, "main_menu", user_id=user_id)
+        await query.edit_message_text(
+            text="Вы вышли из справочника. Выберите действие в меню.",
+            reply_markup=main_menu_kb(),
+        )
+        return
+
     # ── Admin callbacks ──
     if data == "admin_panel":
         if not is_admin(user_id):
@@ -433,6 +471,46 @@ async def handle_callback(
 
 
 # ──────────────────── FSM Actions ────────────────────
+
+# Maximum number of user/assistant message pairs to keep in history.
+_REFERENCE_MAX_PAIRS = 10
+
+
+async def handle_reference_chat(bot, db, state, chat_id, user_id, text: str) -> None:
+    """
+    FSM handler for reference_chat state.
+    Manages conversation history in state_payload["reference_history"].
+    Calls Claude API to answer PsycheOS questions (see [2.4]).
+    """
+    payload: dict = state.state_payload or {}
+    history: list = payload.get("reference_history", [])
+
+    # Append user turn.
+    history.append({"role": "user", "content": text})
+
+    # Placeholder — replaced with Claude API call in [2.4].
+    assistant_text = "⏳ _Справочник временно недоступен. Claude API не подключён._"
+
+    # Append assistant turn.
+    history.append({"role": "assistant", "content": assistant_text})
+
+    # Keep only the last N pairs (2 * N messages).
+    if len(history) > _REFERENCE_MAX_PAIRS * 2:
+        history = history[-(_REFERENCE_MAX_PAIRS * 2):]
+
+    # Persist updated history.
+    await upsert_chat_state(
+        db, "pro", chat_id, "reference_chat", user_id=user_id,
+        state_payload={"reference_history": history},
+    )
+
+    await bot.send_message(
+        chat_id=chat_id,
+        text=assistant_text,
+        reply_markup=exit_reference_kb(),
+        parse_mode="Markdown",
+    )
+
 
 async def handle_case_archive(query, db, user_id, context_id_str):
     """Archive a case after verifying ownership."""
