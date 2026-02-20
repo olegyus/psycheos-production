@@ -15,6 +15,7 @@ import secrets
 import uuid
 from datetime import datetime, timezone, timedelta
 
+from anthropic import AsyncAnthropic
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -27,6 +28,7 @@ from app.models.user import User
 from app.models.invite import Invite
 from app.models.context import Context
 from app.services.links import issue_link
+from app.services.pro.reference_prompt import REFERENCE_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -481,7 +483,7 @@ async def handle_reference_chat(bot, db, state, chat_id, user_id, text: str) -> 
     """
     FSM handler for reference_chat state.
     Manages conversation history in state_payload["reference_history"].
-    Calls Claude API to answer PsycheOS questions (see [2.4]).
+    Calls Claude Haiku API (non-streaming) with REFERENCE_SYSTEM_PROMPT.
     """
     payload: dict = state.state_payload or {}
     history: list = payload.get("reference_history", [])
@@ -489,8 +491,21 @@ async def handle_reference_chat(bot, db, state, chat_id, user_id, text: str) -> 
     # Append user turn.
     history.append({"role": "user", "content": text})
 
-    # Placeholder — replaced with Claude API call in [2.4].
-    assistant_text = "⏳ _Справочник временно недоступен. Claude API не подключён._"
+    # Claude API call (non-streaming).
+    try:
+        client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        response = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1024,
+            system=REFERENCE_SYSTEM_PROMPT,
+            messages=history,  # full history including just-added user turn
+        )
+        assistant_text = response.content[0].text
+    except Exception:
+        logger.exception("Reference chat: Claude API error for chat_id=%s", chat_id)
+        assistant_text = (
+            "⚠️ Не удалось получить ответ. Попробуйте ещё раз или выйдите из справочника."
+        )
 
     # Append assistant turn.
     history.append({"role": "assistant", "content": assistant_text})
