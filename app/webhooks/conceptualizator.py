@@ -25,6 +25,7 @@ from app.services.conceptualizer.decision_policy import (
 from app.services.conceptualizer.models import DataMap, SessionState
 from app.services.conceptualizer.enums import SessionStateEnum
 from app.services.conceptualizer.output import assemble_output
+from app.services.artifacts import save_artifact
 from app.services.links import LinkVerifyError, verify_link
 from app.webhooks.common import upsert_chat_state
 
@@ -395,6 +396,28 @@ async def _run_output_assembly(
     session.transition_to(SessionStateEnum.OUTPUT_ASSEMBLY)
     session.transition_to(SessionStateEnum.COMPLETE)
     await _save_session(db, session, "complete", state, chat_id, user_id)
+
+    # Persist artifact
+    _leading = output.layer_a.leading_formulation
+    _summary = _leading[:150] + ("…" if len(_leading) > 150 else "")
+    await save_artifact(
+        db=db,
+        run_id=(state.state_payload or {}).get("run_id"),
+        service_id="conceptualizator",
+        context_id=state.context_id,
+        specialist_telegram_id=user_id,
+        payload={
+            "layer_a": output.layer_a.model_dump(mode="json"),
+            "layer_b": output.layer_b.model_dump(mode="json"),
+            "layer_c": output.layer_c.model_dump(mode="json"),
+            "meta": {
+                "session_id": output.session_id,
+                "hypothesis_count": len(session.hypotheses),
+                "red_flags": [str(f) for f in session.red_flags],
+            },
+        },
+        summary=_summary,
+    )
 
     logger.info(f"[{BOT_ID}] Conceptualization complete user={user_id}")
     await bot.send_message(

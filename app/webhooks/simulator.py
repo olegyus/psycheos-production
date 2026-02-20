@@ -30,6 +30,7 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, InputFile,
 
 from app.config import settings
 from app.models.bot_chat_state import BotChatState
+from app.services.artifacts import save_artifact
 from app.services.links import LinkVerifyError, verify_link
 from app.services.simulator.cases import BUILTIN_CASES
 from app.services.simulator.formatter import (
@@ -819,6 +820,22 @@ async def _on_end_confirm(
             state_payload=final_payload, user_id=user_id,
             context_id=state.context_id,
         )
+        _tsi_txt = f"TSI: {tsi.tsi:.2f} ({tsi.interpretation})" if tsi else "TSI: н/д"
+        await save_artifact(
+            db=db,
+            run_id=payload.get("run_id"),
+            service_id="simulator",
+            context_id=state.context_id,
+            specialist_telegram_id=user_id,
+            payload={
+                "tsi": tsi.model_dump(mode="json") if tsi else None,
+                "cci": cci.model_dump(mode="json") if cci else None,
+                "session_turns": len(session_data.iteration_log),
+                "report_text": report_text,
+                "profile": specialist_profile.model_dump(mode="json") if specialist_profile else None,
+            },
+            summary=f"Симуляция (текстовый отчёт). {_tsi_txt}.",
+        )
         return
 
     exchanges = len(session_data.iteration_log)
@@ -851,6 +868,24 @@ async def _on_end_confirm(
         db, bot_id=BOT_ID, chat_id=chat_id, state="complete",
         state_payload=final_payload, user_id=user_id,
         context_id=state.context_id,
+    )
+
+    _tsi_txt = f"TSI: {tsi.tsi:.2f} ({tsi.interpretation})" if tsi else "TSI: н/д"
+    _cci_txt = f" | CCI: {cci.cci:.2f}" if cci else ""
+    await save_artifact(
+        db=db,
+        run_id=payload.get("run_id"),
+        service_id="simulator",
+        context_id=state.context_id,
+        specialist_telegram_id=user_id,
+        payload={
+            "tsi": tsi.model_dump(mode="json") if tsi else None,
+            "cci": cci.model_dump(mode="json") if cci else None,
+            "session_turns": exchanges,
+            "report_text": report_text,
+            "profile": specialist_profile.model_dump(mode="json") if specialist_profile else None,
+        },
+        summary=f"Симуляция. {_tsi_txt}{_cci_txt}.",
     )
 
 

@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 
 from anthropic import AsyncAnthropic
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services.artifacts import save_artifact
 from telegram import Bot, InputFile, Update
 
 from app.config import settings
@@ -407,6 +409,29 @@ async def _run_interpretation(
         chat_id=chat_id,
         document=InputFile(io.BytesIO(json_bytes), filename=f"{base_name}.json"),
         caption="📋 Структурированные данные (JSON)",
+    )
+
+    # --- Persist artifact ---
+    _material = payload.get("material_type", "материал")
+    _completeness = payload.get("completeness", "")
+    _summary = f"Интерпретация: {_material}. Полнота: {_completeness}."
+    await save_artifact(
+        db=db,
+        run_id=payload.get("run_id"),
+        service_id="interpretator",
+        context_id=state.context_id,
+        specialist_telegram_id=user_id,
+        payload={
+            "meta": {
+                "material_type": _material,
+                "completeness": _completeness,
+                "mode": payload.get("mode", "STANDARD"),
+                "iteration_count": payload.get("iteration_count", 0),
+            },
+            "txt_report": txt_bytes.decode("utf-8"),
+            "structured": output,
+        },
+        summary=_summary,
     )
 
     # --- Mark session completed ---
