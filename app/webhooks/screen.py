@@ -258,6 +258,10 @@ async def _handle_callback(
             await bot.send_message(chat_id=chat_id, text="❌ Ошибка сессии.")
             return
 
+        # Remove keyboard immediately so the user sees feedback, then show typing
+        await query.edit_message_reply_markup(reply_markup=None)
+        await bot.send_chat_action(chat_id=chat_id, action="typing")
+
         orchestrator = ScreenOrchestrator(db)
         assessment_id = UUID(assessment_id_str)
         current_screen = payload.get("current_screen", {})
@@ -277,8 +281,6 @@ async def _handle_callback(
                 assessment_id, selected, current_screen
             )
 
-        await query.edit_message_reply_markup(reply_markup=None)
-
         if result["action"] == "show_screen":
             next_phase = result.get("phase", int(current_state[-1]))
             next_state = f"phase{next_phase}"
@@ -294,6 +296,7 @@ async def _handle_callback(
             )
             await _show_multi_select(bot, chat_id, result["screen"], [])
         elif result["action"] == "complete":
+            await bot.send_message(chat_id=chat_id, text="⏳ Анализирую ваши ответы...")
             await _handle_completion(bot, db, chat_id, user_id, state, result)
         return
 
