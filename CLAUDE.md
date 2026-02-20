@@ -10,7 +10,7 @@ PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for 
 - **AI**: Anthropic Claude API ✅ интегрирован — Simulator, Conceptualizer, Interpreter используют `claude-sonnet-4-5-20250929`; Screen v2 — при генерации отчёта
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
-- **Current phase**: Phase 4 **COMPLETE** — все 5 ботов мигрированы ✅ (Interpretator ✅ Conceptualizator ✅ Screen v2 ✅ Simulator ✅); next: Phase 5
+- **Current phase**: Phase 6 **COMPLETE** — Screen UX/bug fixes ✅ + Interpreter Claude gaps filled ✅; next: Phase 7
 
 ---
 
@@ -151,6 +151,19 @@ POST /webhook/{bot_id}
 | `admin_panel`        | `/admin` (admin only)           | Admin panel                        |
 | `waiting_case_name`  | "➕ Новый кейс" button          | Waiting for specialist to type case name |
 | `waiting_invite_note`| "🔗 Создать приглашение" button | Waiting for admin to type invite note |
+
+---
+
+## Interpretator Bot FSM States
+
+| State               | Trigger                             | Description                                                   |
+|---------------------|-------------------------------------|---------------------------------------------------------------|
+| `active`            | `/start {jti}` verified             | Session open; awaiting first material from specialist         |
+| `intake`            | Claude asks clarifying Q in INTAKE  | Awaiting specialist's answer before material check            |
+| `clarification_loop`| `completeness != "sufficient"`      | Material partial/fragmentary; Claude asks phenomenological Qs (max 2 iterations) |
+| `completed`         | Interpretation sent                 | Session closed; further messages rejected                     |
+
+Flow: `active` → specialist types material → `_run_intake` (Claude INTAKE prompt, may set `intake`) → `_run_material_check` (Claude MATERIAL_CHECK prompt) → if sufficient: `_run_interpretation`; else → `clarification_loop` (Claude CLARIFICATION_LOOP prompt, max 2 rounds) → `_run_interpretation` → `completed`.
 
 ---
 
@@ -325,8 +338,8 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 | 2     | Pro bot: invite-only registration, cases, admin panel                              | Done            |
 | 3     | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | **Done**        |
 | 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **COMPLETE** ✅ (все 5 ботов мигрированы)                                       |
-| 5     | Claude AI integration — tool-боты ✅ в Phase 4; Screen v2 report ✅; Screen questions via Claude — уточнить scope | Planned (redefine) |
-| 6     | Client-side (Screen bot) session flow                                              | Planned         |
+| 5     | Interpreter Claude gaps: `_run_material_check` + `clarification_loop` FSM state + `clarifications_received` | **COMPLETE** ✅ |
+| 6     | Screen bot: bug fix `_notify_specialist` + `asked_nodes` dedup + UX (typing, phase transitions, Phase 1 progress) | **COMPLETE** ✅ |
 | 7     | Billing (Telegram Stars)                                                           | Planned         |
 
 ---
@@ -346,8 +359,8 @@ No authentication required. Used by Railway for healthchecks.
 | Бот              | Статус                    | Примечание                                                                                                    |
 |------------------|---------------------------|---------------------------------------------------------------------------------------------------------------|
 | Pro              | Требует v2                | Центральный хаб: регистрация, оплата, выход на остальные боты (tool-боты), ИИ-справочник по системе. Текущая версия не адаптирована под продакшн |
-| Screen           | ✅ Screen v2 DONE (Phase 4) | Steps 1–9 ✅ `app/webhooks/screen.py` + Pro v2a расширение                                                |
-| Interpreter      | ✅ Мигрирован (Phase 4)   | `app/webhooks/interpretator.py`; оригинал: `./psycheos-interpreter`                                          |
+| Screen           | ✅ Phase 6 DONE           | Steps 1–9 ✅ + bug fix `_notify_specialist` + `asked_nodes` dedup + UX (typing, phase transitions, Phase 1 progress "Вопрос N из 6") |
+| Interpreter      | ✅ Phase 5 DONE           | `app/webhooks/interpretator.py`; все Claude-гэпы закрыты: material_check + clarification_loop + clarifications_received |
 | Conceptualizer   | ✅ Мигрирован (Phase 4)   | `app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`; оригинал: `./psycheos-conceptualizer`  |
 | Simulator        | ✅ Мигрирован (Phase 4)   | `app/webhooks/simulator.py` + `app/services/simulator/`; оригинал: `./psycheos-simulator`                   |
 
@@ -368,6 +381,16 @@ No authentication required. Used by Railway for healthchecks.
    - ✅ Step 8: `webhooks/pro.py` — screen_menu/create/results коллбэки; кнопка «📊 Скрининг»
    - ✅ Step 9: `main.py` + `models/__init__.py` — интеграция Screen v2
 4. ✅ Simulator — мигрирован (`app/webhooks/simulator.py` + `app/services/simulator/`)
+5. ✅ Interpreter — Claude-гэпы закрыты (Phase 5):
+   - ✅ Gap 3: `clarifications_received[]` заполняется при ответах в состояниях `intake` и `clarification_loop`
+   - ✅ Gap 1: `_run_material_check()` с `MATERIAL_CHECK_PROMPT`; JSON-ответ `completeness`; роутинг в `clarification_loop` если не "sufficient"
+   - ✅ Gap 2: FSM-состояние `clarification_loop` с `CLARIFICATION_LOOP_PROMPT`; max 2 итерации, затем fallthrough в `_run_interpretation`
+6. ✅ Screen — UX/bug fixes (Phase 6):
+   - ✅ Fix 1: `_notify_specialist` — брать `specialist_user_id` (BigInteger Telegram ID) из `ScreeningAssessment`, не из `Context`
+   - ✅ Fix 2: `asked_nodes` dedup — `node`+`phase` в `response_history`; Phase 2/3 routing исключает уже заданные узлы
+   - ✅ Fix 3: `send_chat_action("typing")` + `⏳ Анализирую...` перед генерацией отчёта
+   - ✅ Fix 4: Сообщения при переходе между фазами (phase1→phase2, phase2→phase3)
+   - ✅ Fix 5: `_show_multi_select(header=...)` — "📋 Вопрос N из 6" в Phase 1
 
 ---
 
@@ -394,3 +417,8 @@ No authentication required. Used by Railway for healthchecks.
 - **Simulator PRACTICE mode:** `custom_prompt` (system prompt + данные специалиста) хранится в `state_payload["custom_prompt"]`; при каждом запросе к Claude берётся оттуда
 - **screening_assessment и Alembic:** таблица `screening_assessment` не имеет Alembic-миграции — создаётся через `Base.metadata.create_all` при старте. Миграции Alembic: существует только `0001_create_link_tokens.py`. Следующая генерация: `alembic revision --autogenerate -m "add screening_assessment"` → `0002_...`
 - **Claude model (Phase 4):** все tool-боты (Simulator, Conceptualizer, Interpreter, Screen report) используют `claude-sonnet-4-5-20250929` через `AsyncAnthropic` напрямую (не через обёртку). Модель задаётся константой `_ANTHROPIC_MODEL` в каждом модуле.
+- **Interpreter FSM states (Phase 5):** `active` → specialist types → `_run_intake` (может перейти в `intake` если Claude задал уточняющий вопрос) → `_run_material_check` (completeness: "sufficient" | "partial" | "fragmentary") → если sufficient: `_run_interpretation` → `completed`; иначе → `clarification_loop` (max `_MAX_CLARIFICATION_ITERATIONS = 2` итерации, затем принудительный fallthrough в interpretation). `clarifications_received[]` в payload накапливает ответы специалиста в обоих состояниях `intake` и `clarification_loop`.
+- **Interpreter `_run_material_check` JSON parsing:** Claude получает инструкцию вернуть `{"completeness": "sufficient|partial|fragmentary", "message": "..."}` — парсинг через `_parse_completeness()` с JSON-first, keyword-fallback (fragmentary / partial / default sufficient) подходом.
+- **Screen `asked_nodes` deduplication (Phase 6):** каждый entry в `response_history` дополнен полями `node` (str) и `phase` (int). ScreeningEngine игнорирует лишние ключи (читает только `axis_weights`/`layer_weights` через `.get()`). `_asked_nodes(state)` извлекает set узлов из response_history где phase in (2, 3). `_fallback_node(state, exclude)` итерирует сначала ambiguity_zones, затем all_nodes, пропуская exclude; при исчерпании — wrap к первому узлу. Phase 2/3 routing принимает Claude-предложение только если оно не в exclude.
+- **Screen `_show_multi_select` header (Phase 6):** опциональный параметр `header: str | None = None`; если задан — prepend к тексту вопроса как `"{header}\n\n{question}"`. В Phase 1 оба call-site передают `f"📋 Вопрос {screen_index + 1} из 6"`. Phase 2/3 передают `None` (переменная длина фаз).
+- **Screen `_notify_specialist` fix (Phase 6):** функция принимает `assessment_id_str` + `context_id`; загружает `ScreeningAssessment` по UUID, берёт `assessment.specialist_user_id` (BigInteger Telegram ID) для `chat_id` в Pro-боте. `Context` загружается отдельно только для получения `client_ref` (label). `Context.specialist_user_id` — UUID FK, НЕ Telegram ID.
