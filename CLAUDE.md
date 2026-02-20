@@ -7,7 +7,7 @@ PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for 
 - **Framework**: FastAPI + async SQLAlchemy (asyncpg)
 - **Database**: PostgreSQL via Supabase (connection pooler in production)
 - **Telegram**: `python-telegram-bot` 21.x (webhook mode only, no polling)
-- **AI**: Anthropic Claude API (integrated in future phases)
+- **AI**: Anthropic Claude API ✅ интегрирован — Simulator, Conceptualizer, Interpreter используют `claude-sonnet-4-5-20250929`; Screen v2 — при генерации отчёта
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
 - **Current phase**: Phase 4 **COMPLETE** — все 5 ботов мигрированы ✅ (Interpretator ✅ Conceptualizator ✅ Screen v2 ✅ Simulator ✅); next: Phase 5
@@ -46,13 +46,20 @@ psycheos-production/
 │   │   │   ├── decision_policy.py #  PriorityChecker + QuestionGenerator + selector
 │   │   │   ├── analysis.py      #   Async hypothesis extraction via Claude
 │   │   │   └── output.py        #   Async three-layer output assembly via Claude
-│   │   └── screen/              # Screen v2 service modules
-│   │       ├── engine.py        #   ScreeningEngine: vector aggregation, tension matrix, rigidity, confidence ✅
-│   │       ├── weight_matrix.py #   PHASE1_SCREENS (6) + PHASE2_TEMPLATES (20 nodes) with axis/layer weights ✅
-│   │       ├── screen_bank.py   #   get_phase1_screen / get_phase2_template / get_all_phase2_nodes ✅
-│   │       ├── prompts.py       #   5 Claude prompts + assemble_prompt() ✅
-│   │       ├── orchestrator.py  #   ScreenOrchestrator: 3-phase flow, Claude routing, stop decision ✅
-│   │       └── report.py        #   generate_full_report / format_report_txt / generate_report_docx ✅
+│   │   ├── screen/              # Screen v2 service modules ✅
+│   │   │   ├── engine.py        #   ScreeningEngine: vector aggregation, tension matrix, rigidity, confidence ✅
+│   │   │   ├── weight_matrix.py #   PHASE1_SCREENS (6) + PHASE2_TEMPLATES (20 nodes) with axis/layer weights ✅
+│   │   │   ├── screen_bank.py   #   get_phase1_screen / get_phase2_template / get_all_phase2_nodes ✅
+│   │   │   ├── prompts.py       #   5 Claude prompts (router/constructor/report/session_bridge/stop) + assemble_prompt() ✅
+│   │   │   ├── orchestrator.py  #   ScreenOrchestrator: 3-phase flow, Claude routing, stop decision ✅
+│   │   │   └── report.py        #   generate_full_report / format_report_txt / generate_report_docx ✅
+│   │   └── simulator/           # Simulator service modules ✅
+│   │       ├── schemas.py       #   Pydantic v2: SessionData, FSMState, SpecialistProfile, TSIComponents, …
+│   │       ├── cases.py         #   BUILTIN_CASES (3 встроенных кейса)
+│   │       ├── goals.py         #   GOAL_LABELS, MODE_LABELS
+│   │       ├── system_prompt.py #   build_system_prompt(case, goal, mode) → str
+│   │       ├── formatter.py     #   parse_claude_response, format_for_telegram, build_iteration_log
+│   │       └── report_generator.py # generate_report_docx() → io.BytesIO
 │   └── utils/
 │       └── idempotency.py    # Idempotency key builder (format from Dev Spec Appendix C)
 ├── scripts/
@@ -211,6 +218,8 @@ uvicorn app.main:app --reload --port 8000
 
 Tables are created automatically on startup via `Base.metadata.create_all` (lifespan event). No migrations needed for new local environments.
 
+**Alembic migrations (production):** На данный момент существует только одна миграция — `0001_create_link_tokens.py`. Таблица `screening_assessment` создана через `create_all` (не через Alembic). Перед следующим `alembic upgrade head` нужно сгенерировать `0002_create_screening_assessment.py`.
+
 ### Database Migrations (Alembic)
 
 Use `DATABASE_URL` (direct connection, not pooler) for migrations:
@@ -316,7 +325,7 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 | 2     | Pro bot: invite-only registration, cases, admin panel                              | Done            |
 | 3     | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | **Done**        |
 | 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **COMPLETE** ✅ (все 5 ботов мигрированы)                                       |
-| 5     | Claude AI integration for analysis tools                                           | Planned         |
+| 5     | Claude AI integration — tool-боты ✅ в Phase 4; Screen v2 report ✅; Screen questions via Claude — уточнить scope | Planned (redefine) |
 | 6     | Client-side (Screen bot) session flow                                              | Planned         |
 | 7     | Billing (Telegram Stars)                                                           | Planned         |
 
@@ -383,3 +392,5 @@ No authentication required. Used by Railway for healthchecks.
 - **Simulator FSM states:** `setup` (setup_step: mode→case→goal / upload→crisis→goal_practice) → `active` (реплики специалиста → Claude) → `complete`; сессия в `state_payload["session"]` (SessionData), профиль в `state_payload["profile"]` (SpecialistProfile, накопительно)
 - **Simulator report:** `generate_report_docx()` возвращает `io.BytesIO` (не путь к файлу); отправляется через `InputFile(buf, filename=...)` как `.docx`
 - **Simulator PRACTICE mode:** `custom_prompt` (system prompt + данные специалиста) хранится в `state_payload["custom_prompt"]`; при каждом запросе к Claude берётся оттуда
+- **screening_assessment и Alembic:** таблица `screening_assessment` не имеет Alembic-миграции — создаётся через `Base.metadata.create_all` при старте. Миграции Alembic: существует только `0001_create_link_tokens.py`. Следующая генерация: `alembic revision --autogenerate -m "add screening_assessment"` → `0002_...`
+- **Claude model (Phase 4):** все tool-боты (Simulator, Conceptualizer, Interpreter, Screen report) используют `claude-sonnet-4-5-20250929` через `AsyncAnthropic` напрямую (не через обёртку). Модель задаётся константой `_ANTHROPIC_MODEL` в каждом модуле.
