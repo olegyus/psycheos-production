@@ -17,15 +17,10 @@ from telegram import Bot, Update
 
 from app.config import settings
 from app.models.bot_chat_state import BotChatState
-from app.services.conceptualizer.analysis import extract_hypothesis_from_response
-from app.services.conceptualizer.decision_policy import (
-    select_next_question,
-    should_continue_dialogue,
-)
+from app.services.conceptualizer.decision_policy import select_next_question
 from app.services.conceptualizer.models import DataMap, SessionState
 from app.services.conceptualizer.enums import SessionStateEnum
-from app.services.conceptualizer.output import assemble_output
-from app.services.artifacts import save_artifact
+from app.services.job_queue import enqueue
 from app.services.links import LinkVerifyError, verify_link
 from app.webhooks.common import upsert_chat_state
 
@@ -260,7 +255,7 @@ async def _handle_dialogue(
     session: SessionState, state: BotChatState,
     chat_id: int, user_id: int | None,
 ) -> None:
-    # Clarification request → rephrase without extracting hypothesis
+    # Clarification request → rephrase synchronously (no Claude needed)
     if _is_clarification_request(text):
         await bot.send_message(
             chat_id=chat_id,
@@ -275,156 +270,21 @@ async def _handle_dialogue(
         )
         return
 
-    # Extract hypothesis from substantive answers
-    if len(text) > 30:
-        await bot.send_chat_action(chat_id=chat_id, action="typing")
-        try:
-            hypothesis = await extract_hypothesis_from_response(text, session)
-            session.add_hypothesis(hypothesis)
-
-            type_emoji = {
-                "structural": "🏗",
-                "functional": "⚙️",
-                "dynamic": "🔄",
-                "managerial": "🎯",
-            }
-            emoji = type_emoji.get(hypothesis.type.value, "📝")
-            levels_str = ", ".join(l.value for l in hypothesis.levels)
-
-            await bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    f"✅ {emoji} Гипотеза извлечена\n"
-                    f"<b>Тип:</b> {hypothesis.type.value}\n"
-                    f"<b>Слои:</b> {levels_str}\n"
-                    f"<b>Формулировка:</b> {hypothesis.formulation}\n\n"
-                    f"<i>Всего гипотез: {len(session.get_active_hypotheses())} "
-                    f"(управленческих: {len(session.get_managerial_hypotheses())})</i>"
-                ),
-                parse_mode="HTML",
-            )
-        except Exception:
-            logger.exception(f"[{BOT_ID}] Hypothesis extraction failed user={user_id}")
-            await bot.send_message(
-                chat_id=chat_id,
-                text="⚠️ Не удалось извлечь гипотезу. Попробуйте переформулировать.",
-            )
-            return
-
-    # Check whether to continue dialogue or move to output
-    should_continue, reason = should_continue_dialogue(session)
-
-    if not should_continue:
-        await _save_session(db, session, "socratic_dialogue", state, chat_id, user_id)
-        await bot.send_message(
-            chat_id=chat_id,
-            text=f"📋 {reason}\n\n⏳ Формирую концептуализацию...",
-        )
-        await _run_output_assembly(bot, db, session, state, chat_id, user_id)
-        return
-
-    # Ask next question
-    selection = select_next_question(session)
-    session.progress.increment_dialogue_turns()
+    # Substantive response → persist current session, enqueue concept_hypothesis job.
+    # Worker (app/worker/handlers/conceptualizator.py) extracts hypothesis via Claude,
+    # checks should_continue_dialogue, and either asks the next question or triggers output.
+    run_id_str = (state.state_payload or {}).get("run_id")
     await _save_session(db, session, "socratic_dialogue", state, chat_id, user_id)
-
-    await bot.send_message(
-        chat_id=chat_id,
-        text=(
-            f"💬 <b>Вопрос {session.progress.dialogue_turns}</b>\n\n"
-            f"❓ {selection.question_text}"
-        ),
-        parse_mode="HTML",
-    )
-
-
-# ── Output assembly ────────────────────────────────────────────────────────────
-
-async def _run_output_assembly(
-    bot: Bot, db: AsyncSession,
-    session: SessionState, state: BotChatState,
-    chat_id: int, user_id: int | None,
-) -> None:
-    await bot.send_chat_action(chat_id=chat_id, action="typing")
-    try:
-        output = await assemble_output(session)
-    except Exception:
-        logger.exception(f"[{BOT_ID}] Output assembly failed user={user_id}")
-        await bot.send_message(
-            chat_id=chat_id,
-            text="❌ Ошибка формирования концептуализации. Попробуйте позже.",
-        )
-        return
-
-    # Layer A
-    await bot.send_message(
-        chat_id=chat_id,
-        text=(
-            "📊 <b>LAYER A: Концептуальная модель</b>\n\n"
-            f"<b>Ведущая гипотеза:</b>\n{output.layer_a.leading_formulation}\n\n"
-            f"<b>Доминирующий слой:</b> {output.layer_a.dominant_layer.value}\n\n"
-            f"<b>Конфигурация:</b>\n{output.layer_a.configuration_summary}\n\n"
-            f"<b>Цена системы:</b>\n{output.layer_a.system_cost}"
-        ),
-        parse_mode="HTML",
-    )
-
-    # Layer B
-    b_lines = ["🎯 <b>LAYER B: Мишени вмешательства</b>\n"]
-    for t in output.layer_b.targets:
-        b_lines.append(f"<b>{t.priority}. {t.layer}</b>\n{t.direction}\n")
-    b_lines.append(f"\n<b>Последовательность:</b>\n{output.layer_b.sequencing_notes}")
-    await bot.send_message(
-        chat_id=chat_id,
-        text="\n".join(b_lines),
-        parse_mode="HTML",
-    )
-
-    # Layer C
-    await bot.send_message(
-        chat_id=chat_id,
-        text=(
-            "🎭 <b>LAYER C: Метафорический нарратив</b>\n\n"
-            f"<b>Метафора:</b> <i>{output.layer_c.core_metaphor}</i>\n\n"
-            f"{output.layer_c.narrative}\n\n"
-            f"<b>Направление изменения:</b>\n{output.layer_c.direction_of_change}"
-        ),
-        parse_mode="HTML",
-    )
-
-    # Mark complete
-    session.transition_to(SessionStateEnum.OUTPUT_ASSEMBLY)
-    session.transition_to(SessionStateEnum.COMPLETE)
-    await _save_session(db, session, "complete", state, chat_id, user_id)
-
-    # Persist artifact
-    _leading = output.layer_a.leading_formulation
-    _summary = _leading[:150] + ("…" if len(_leading) > 150 else "")
-    await save_artifact(
-        db=db,
-        run_id=(state.state_payload or {}).get("run_id"),
-        service_id="conceptualizator",
-        context_id=state.context_id,
-        specialist_telegram_id=user_id,
+    await enqueue(
+        db, "concept_hypothesis", BOT_ID, chat_id,
         payload={
-            "layer_a": output.layer_a.model_dump(mode="json"),
-            "layer_b": output.layer_b.model_dump(mode="json"),
-            "layer_c": output.layer_c.model_dump(mode="json"),
-            "meta": {
-                "session_id": output.session_id,
-                "hypothesis_count": len(session.hypotheses),
-                "red_flags": [str(f) for f in session.red_flags],
-            },
+            "session": session.model_dump(mode="json"),
+            "message_text": text,
+            "role": state.role or "specialist",
         },
-        summary=_summary,
+        user_id=user_id, context_id=state.context_id, run_id=run_id_str,
     )
-
-    logger.info(f"[{BOT_ID}] Conceptualization complete user={user_id}")
-    await bot.send_message(
-        chat_id=chat_id,
-        text="✅ <b>Концептуализация завершена!</b>\n\nЗапустите новую сессию через бот Pro.",
-        parse_mode="HTML",
-    )
+    await bot.send_message(chat_id=chat_id, text="⏳ Анализирую ответ...")
 
 
 # ── Utility commands ───────────────────────────────────────────────────────────

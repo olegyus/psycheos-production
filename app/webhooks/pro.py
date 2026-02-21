@@ -15,7 +15,6 @@ import secrets
 import uuid
 from datetime import datetime, timezone, timedelta
 
-from anthropic import AsyncAnthropic
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -28,8 +27,8 @@ from app.models.user import User
 from app.models.invite import Invite
 from app.models.context import Context
 from app.models.artifact import Artifact
+from app.services.job_queue import enqueue
 from app.services.links import issue_link
-from app.services.pro.reference_prompt import REFERENCE_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -501,49 +500,34 @@ _REFERENCE_MAX_PAIRS = 10
 async def handle_reference_chat(bot, db, state, chat_id, user_id, text: str) -> None:
     """
     FSM handler for reference_chat state.
-    Manages conversation history in state_payload["reference_history"].
-    Calls Claude Haiku API (non-streaming) with REFERENCE_SYSTEM_PROMPT.
+    Appends user turn, persists history, enqueues pro_reference worker job.
+    Worker (app/worker/handlers/pro.py) calls Claude Haiku and sends the reply.
     """
     payload: dict = state.state_payload or {}
-    history: list = payload.get("reference_history", [])
+    history: list = list(payload.get("reference_history", []))
 
-    # Append user turn.
+    # Append user turn and trim to max window.
     history.append({"role": "user", "content": text})
-
-    # Claude API call (non-streaming).
-    try:
-        client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        response = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
-            system=REFERENCE_SYSTEM_PROMPT,
-            messages=history,  # full history including just-added user turn
-        )
-        assistant_text = response.content[0].text
-    except Exception:
-        logger.exception("Reference chat: Claude API error for chat_id=%s", chat_id)
-        assistant_text = (
-            "⚠️ Не удалось получить ответ. Попробуйте ещё раз или выйдите из справочника."
-        )
-
-    # Append assistant turn.
-    history.append({"role": "assistant", "content": assistant_text})
-
-    # Keep only the last N pairs (2 * N messages).
     if len(history) > _REFERENCE_MAX_PAIRS * 2:
         history = history[-(_REFERENCE_MAX_PAIRS * 2):]
 
-    # Persist updated history.
+    # Persist updated history (with user turn) before enqueuing.
     await upsert_chat_state(
         db, "pro", chat_id, "reference_chat", user_id=user_id,
         state_payload={"reference_history": history},
     )
 
+    # Enqueue Claude Haiku job; worker sends the response.
+    await enqueue(
+        db, "pro_reference", "pro", chat_id,
+        payload={"history": history},
+        user_id=user_id, context_id=None, run_id=None,
+    )
+
     await bot.send_message(
         chat_id=chat_id,
-        text=assistant_text,
+        text="⏳ Ищу ответ...",
         reply_markup=exit_reference_kb(),
-        parse_mode="Markdown",
     )
 
 
