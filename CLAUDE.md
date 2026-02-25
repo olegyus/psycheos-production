@@ -10,7 +10,7 @@ PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for 
 - **AI**: Anthropic Claude API (integrated in future phases)
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
-- **Current phase**: Phase 5 done (Artifacts ✅) → Phase 6 Screen v2 next
+- **Current phase**: Phase 6 done (Worker + Outbox ✅) → Phase 6b Screen v2 next
 
 ---
 
@@ -29,14 +29,17 @@ psycheos-production/
 │   │   ├── bot_chat_state.py # FSM state per (bot, chat) — table: bot_chat_state
 │   │   ├── telegram_dedup.py # Dedup table — table: telegram_update_dedup
 │   │   ├── link_token.py     # Link tokens (Phase 3) — table: link_tokens
-│   │   └── artifact.py       # Tool-bot outputs (Phase 5) — table: artifacts
+│   │   ├── artifact.py       # Tool-bot outputs (Phase 5) — table: artifacts
+│   │   ├── job.py            # Async job queue (Phase 6) — table: jobs
+│   │   └── outbox_message.py # Telegram outbox (Phase 6) — table: outbox_messages
 │   ├── webhooks/
 │   │   ├── router_factory.py    # Generic webhook router factory (shared pipeline)
 │   │   ├── common.py            # Shared logic: secret verify, dedup, FSM load/save
 │   │   ├── pro.py               # Pro bot handler (Phase 2 — full implementation)
 │   │   ├── interpretator.py     # Interpretator bot (Phase 4 ✅ migrated)
 │   │   ├── conceptualizator.py  # Conceptualizator bot (Phase 4 ✅ migrated)
-│   │   └── stubs.py             # Screen/Simulator (stubs)
+│   │   ├── stubs.py             # Screen (stub)
+│   │   └── simulator.py         # Simulator bot handler
 │   ├── services/
 │   │   ├── interpreter/         # Interpreter service modules
 │   │   ├── conceptualizer/      # Conceptualizer service modules
@@ -45,8 +48,20 @@ psycheos-production/
 │   │   │   ├── decision_policy.py #  PriorityChecker + QuestionGenerator + selector
 │   │   │   ├── analysis.py      #   Async hypothesis extraction via Claude
 │   │   │   └── output.py        #   Async three-layer output assembly via Claude
-│   │   └── pro/                 # Pro bot services (Sprint B+)
-│   │       └── reference_prompt.py  #   REFERENCE_SYSTEM_PROMPT (loads key_psycheos.md)
+│   │   ├── pro/                 # Pro bot services (Sprint B+)
+│   │   │   └── reference_prompt.py  #   REFERENCE_SYSTEM_PROMPT (loads key_psycheos.md)
+│   │   ├── job_queue.py         # enqueue / claim_next / mark_done / mark_failed
+│   │   ├── outbox.py            # enqueue_message / dispatch_one / make_inline_keyboard / make_document_payload
+│   │   └── artifacts.py         # save_artifact — ON CONFLICT DO NOTHING
+│   ├── worker/
+│   │   ├── __init__.py          # Package marker
+│   │   ├── __main__.py          # Entry point: python -m app.worker (event loop)
+│   │   └── handlers/
+│   │       ├── __init__.py      # REGISTRY dict: job_type → handler
+│   │       ├── pro.py           # handle_pro_reference (Claude Haiku reference chat)
+│   │       ├── interpretator.py # handle_interp_photo / interp_intake / interp_run
+│   │       ├── conceptualizator.py # handle_concept_hypothesis / concept_output
+│   │       └── simulator.py     # handle_sim_launch / sim_launch_custom / sim_report
 │   ├── data/
 │   │   └── key_psycheos.md      # PsycheOS theory base — used by reference chat system prompt
 │   ├── routers/
@@ -308,10 +323,12 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 
 ## Deployment (Railway)
 
-- **Process**: `web: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}` (Procfile)
+- **Processes** (Procfile):
+  - `web: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}`
+  - `worker: python -m app.worker` — async Claude job processor (Phase 6)
 - **Environment**: Set all env vars in Railway dashboard
 - **Database**: Supabase PostgreSQL — use pooler URL for the app, direct URL for migrations only
-- **Scaling**: Keep `DB_POOL_SIZE` low (5) per replica — Supabase free tier has connection limits
+- **Scaling**: Keep `DB_POOL_SIZE` low (5) per replica — Supabase free tier has connection limits; one worker process is sufficient for ≤30 users
 - **Sentry**: Set `SENTRY_DSN` for error tracking; `environment` auto-set based on `DEBUG` flag
 - **Webhook registration**: Run `python -m scripts.set_webhooks` after each new deployment if the URL changes
 
@@ -327,7 +344,8 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 | 4          | Screen/Interpretator/Conceptualizator/Simulator full logic                         | ✅ Done (Interpretator + Conceptualizator ✅; Simulator migrated ✅) |
 | Sprint B   | Pro bot reference chat — Claude Haiku Q&A on PsycheOS theory                      | ✅ Done         |
 | **5**      | **Artifacts — persistent storage of tool outputs; HTTP API; Pro bot integration**  | ✅ **Done**     |
-| 6          | Screen v2 — new question bank, scales, client session flow                         | Planned         |
+| **6**      | **Worker + Outbox — async Claude jobs; webhooks return instant ack**               | ✅ **Done**     |
+| 6b         | Screen v2 — new question bank, scales, client session flow                         | Planned         |
 | 7          | Pro v2 — billing (Telegram Stars), full hub integration                            | Planned         |
 
 ---
@@ -346,11 +364,11 @@ No authentication required. Used by Railway for healthchecks.
 
 | Бот              | Статус                      | Примечание                                                                                                         |
 |------------------|-----------------------------|--------------------------------------------------------------------------------------------------------------------|
-| Pro              | ✅ Sprint B done            | Справочник PsycheOS (reference_chat, Claude Haiku, key_psycheos.md). v2 (биллинг, Hub) — Phase 7                 |
-| Screen           | Stub → Phase 6              | Новый банк вопросов, шкалы и логика работы — Phase 6                                                              |
-| Interpreter      | ✅ Мигрирован (Phase 4)     | `app/webhooks/interpretator.py`; отправляет .txt+.json в Telegram                                                 |
-| Conceptualizer   | ✅ Мигрирован (Phase 4)     | `app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`; Layer A/B/C в Telegram                       |
-| Simulator        | ✅ Мигрирован (Phase 4)     | `app/webhooks/simulator.py`; отправляет .docx-отчёт, TSI/CCI метрики                                             |
+| Pro              | ✅ Phase 6 done             | reference_chat → worker (enqueue). Webhook мгновенно отвечает "⏳". v2 (биллинг, Hub) — Phase 7                  |
+| Screen           | Stub → Phase 6b             | Новый банк вопросов, шкалы и логика работы — Phase 6b                                                             |
+| Interpreter      | ✅ Phase 6 async            | Webhook enqueue interp_photo / interp_intake / interp_run. Результаты через outbox                                |
+| Conceptualizer   | ✅ Phase 6 async            | Webhook enqueue concept_hypothesis / concept_output. Layer A/B/C через outbox                                     |
+| Simulator        | ✅ Phase 6 async            | Launch/report через worker. Активный ход (_handle_specialist_message) — синхронный (trade-off UX)                 |
 
 ---
 
@@ -361,8 +379,9 @@ No authentication required. Used by Railway for healthchecks.
 3. ✅ Simulator — мигрирован (`app/webhooks/simulator.py`)
 4. ✅ Sprint B — Pro Справочник (`app/services/pro/reference_prompt.py`, `reference_chat` FSM)
 5. ✅ **Phase 5 — Artifacts** (`artifacts` table, `save_artifact` service, hooks in 3 bots, `GET /v1/artifacts` API, Pro bot UI)
-6. ⬜ Phase 6 — Screen v2 — новый банк вопросов + логика
-7. ⬜ Phase 7 — Pro v2 — биллинг (Telegram Stars), Hub
+6. ✅ **Phase 6 — Worker + Outbox** (`jobs` + `outbox_messages` tables, `app/worker/`, рефакторинг 4 webhook-обработчиков, Procfile `worker:`)
+7. ⬜ Phase 6b — Screen v2 — новый банк вопросов + логика
+8. ⬜ Phase 7 — Pro v2 — биллинг (Telegram Stars), Hub
 
 ---
 
@@ -390,3 +409,13 @@ No authentication required. Used by Railway for healthchecks.
 - **Artifacts — payload structure:** интерпретатор: `{meta, txt_report, structured}`. Концептуализатор: `{layer_a, layer_b, layer_c, meta}`. Симулятор: `{tsi, cci, session_turns, report_text, profile}`. `report_text` в симуляторе сохраняется в обоих путях (.docx и fallback)
 - **Artifacts — Pro UI routing:** `case_artifacts_{context_id}` и `artifact_{artifact_id}` обрабатываются **до** generic `if data.startswith("case_")` — иначе `case_artifacts_` перехватывается generic-обработчиком. Всегда добавлять специфичные `startswith` паттерны выше generic
 - **Artifacts — HTTP API:** `GET /v1/artifacts?context_id=...` → список (без payload, max 20). `GET /v1/artifacts/{artifact_id}` → полный артефакт с payload. Авторизация отсутствует (внутренний API, аналогично `/v1/links/*`)
+- **Worker — без Redis:** очередь заданий на базе PostgreSQL (`jobs` table), `FOR UPDATE SKIP LOCKED` — безопасный параллельный claim без внешних зависимостей
+- **Worker — job lifecycle:** `pending → running → done | failed`. Экспоненциальный backoff при сбое: `30s × 2^(attempts-1)`, max 3 попытки. После исчерпания → `status='failed'`, `last_error` сохраняется
+- **Worker — outbox:** отправка Telegram-сообщений через `outbox_messages` table. Поле `seq` гарантирует порядок нескольких сообщений одного job. Бинарные файлы (.docx, .txt, .json) хранятся в JSONB как base64 (`document_b64` ключ), декодируются в `_send()` перед отправкой
+- **Worker — InlineKeyboardMarkup:** сериализуется в JSONB как `{"inline_keyboard": [[{"text": ..., "callback_data": ...}]]}`, десериализуется через `InlineKeyboardMarkup.de_json(data, bot)` в `dispatch_one()`
+- **Worker — claim/execute разделены:** `claim_next()` коммитит переход в `running` отдельной транзакцией; handler запускается в новой сессии. При сбое handler — `mark_failed()` открывает ещё одну сессию. Rollback handler'а не откатывает claim
+- **Worker — sim active turn синхронный:** `_handle_specialist_message` в `simulator.py` вызывает Claude напрямую (осознанный trade-off). Причина: высокая частота реплик, специалист ожидает мгновенного ответа
+- **Worker — pro_reference:** webhook сохраняет user-turn в history, затем enqueue. Worker делает Claude-вызов, апдейтит историю (trim до 10 пар), сохраняет state, отправляет ответ через outbox
+- **Worker — chained jobs:** `interp_intake` при принятии материала enqueue-ит `interp_run`. `concept_hypothesis` при `should_continue=False` enqueue-ит `concept_output`. Цепочки формируются внутри worker-обработчиков, не в webhook
+- **Worker — job payload:** всегда содержит `state_payload` (dict из `bot_chat_state`) и `role`. Доп. поля: `image_b64`/`image_media_type` (interp_photo), `run_mode` (interp_run retry), `session` (conceptualizer/simulator), `message_text` (concept_hypothesis), `case_key`/`goal`/`mode`/`crisis` (sim_launch), `custom_data`/`crisis_value` (sim_launch_custom)
+- **Worker — Procfile:** `worker: python -m app.worker`. На Railway — отдельный process type. Один воркер достаточен для ≤30 пользователей. Масштабировать горизонтально при росте нагрузки (FOR UPDATE SKIP LOCKED безопасен для N воркеров)
