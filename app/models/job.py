@@ -12,7 +12,7 @@ status lifecycle:
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, SmallInteger, BigInteger, DateTime, Text, text, Index
+from sqlalchemy import ForeignKey, String, SmallInteger, BigInteger, DateTime, Text, text, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -70,6 +70,16 @@ class Job(Base):
         SmallInteger, nullable=False, server_default=text("3")
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ── Billing (Phase 7) ─────────────────────────────────────────────────────
+    stars_reserved: Mapped[int | None] = mapped_column(
+        SmallInteger, nullable=True
+    )  # Stars locked at tool-launch; None = free operation (e.g. reference chat legacy)
+    wallet_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("wallets.wallet_id", ondelete="SET NULL"),
+        nullable=True,
+    )  # Which wallet was charged; used by worker to commit/cancel
 
     # ── Timestamps ────────────────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(
