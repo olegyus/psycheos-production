@@ -25,6 +25,7 @@ from telegram import Bot
 from app.config import settings
 from app.database import async_session
 from app.models.job import Job as JobModel
+from app.services.billing import commit_by_run_id, cancel_by_run_id, TERMINAL_JOB_TYPES
 from app.services.job_queue import claim_next, mark_done, mark_failed
 from app.services.outbox import dispatch_one
 from app.worker.handlers import REGISTRY
@@ -59,6 +60,27 @@ async def _mark_job_failed(job_id: uuid.UUID, error: str) -> None:
             job_row = result.scalar_one_or_none()
             if job_row:
                 await mark_failed(db, job_row, error)
+
+                # ── Billing: cancel reservation on permanent failure ───────
+                if (
+                    job_row.status == "failed"  # permanently failed, not rescheduled
+                    and job_row.job_type in TERMINAL_JOB_TYPES
+                    and job_row.run_id is not None
+                ):
+                    try:
+                        cancelled = await cancel_by_run_id(
+                            db, job_row.run_id, job_row.user_id or 0
+                        )
+                        if cancelled:
+                            logger.info(
+                                "[worker] billing cancel run_id=%s job_id=%s",
+                                job_row.run_id, job_id,
+                            )
+                    except Exception:
+                        logger.exception(
+                            "[worker] billing cancel failed for run_id=%s", job_row.run_id
+                        )
+
                 await db.commit()
     except Exception:
         logger.exception("[worker] could not mark job_id=%s as failed", job_id)
@@ -100,6 +122,26 @@ async def _process_one_job(bots: dict[str, Bot]) -> bool:
 
             await handler(job_row, db, bots)
             await mark_done(db, job_row)
+
+            # ── Billing: commit reservation for terminal jobs ─────────────
+            if (
+                job_row.job_type in TERMINAL_JOB_TYPES
+                and job_row.run_id is not None
+            ):
+                try:
+                    committed = await commit_by_run_id(
+                        db, job_row.run_id, job_row.user_id or 0
+                    )
+                    if committed:
+                        logger.info(
+                            "[worker] billing commit run_id=%s job_id=%s",
+                            job_row.run_id, job_id,
+                        )
+                except Exception:
+                    logger.exception(
+                        "[worker] billing commit failed for run_id=%s", job_row.run_id
+                    )
+
             await db.commit()
 
         logger.info("[worker] ✓ done job_id=%s", job_id)
