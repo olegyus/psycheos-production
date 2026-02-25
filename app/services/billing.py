@@ -251,6 +251,113 @@ async def credit_stars(
 
 
 # ---------------------------------------------------------------------------
+# Worker helpers — settle reservations by run_id
+# ---------------------------------------------------------------------------
+
+# Job types that represent the terminal (final) step of a billed session.
+# Only these should trigger commit / cancel of the reservation.
+TERMINAL_JOB_TYPES: frozenset[str] = frozenset({
+    "interp_run",          # Interpretator — final analysis step
+    "concept_output",      # Conceptualizator — 3-layer output step
+    "sim_launch",          # Simulator — full session launch
+    "sim_launch_custom",   # Simulator — custom launch (may lack run_id; safe to skip)
+})
+
+
+async def commit_by_run_id(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    telegram_id: int,
+) -> bool:
+    """
+    Called by the worker after a terminal job completes successfully.
+
+    Looks up the pending reservation for *run_id* in usage_ledger and calls
+    commit_reservation() to deduct from balance and release the lock.
+
+    Returns True if a reservation was found and committed, False otherwise.
+    Idempotent: a second call for the same run_id finds no pending reservation
+    (charge entry already exists) and returns False.
+    """
+    # Guard against double-commit (e.g., worker retry after network timeout)
+    settled = await db.execute(
+        select(UsageLedger).where(
+            UsageLedger.run_id == run_id,
+            UsageLedger.kind.in_(["charge", "refund"]),
+        ).limit(1)
+    )
+    if settled.scalar_one_or_none() is not None:
+        return False  # already settled
+
+    result = await db.execute(
+        select(UsageLedger).where(
+            UsageLedger.run_id == run_id,
+            UsageLedger.kind == "reserve",
+        ).limit(1)
+    )
+    entry = result.scalar_one_or_none()
+    if entry is None:
+        return False  # no reservation — free operation or unknown run_id
+
+    stars = abs(entry.stars)  # reserve entries are stored as negative
+    await commit_reservation(
+        db,
+        wallet_id=entry.wallet_id,
+        telegram_id=telegram_id,
+        stars_reserved=stars,
+        run_id=run_id,
+        service_id=entry.service_id,
+        operation=entry.operation,
+    )
+    return True
+
+
+async def cancel_by_run_id(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    telegram_id: int,
+) -> bool:
+    """
+    Called by the worker after a terminal job is permanently failed.
+
+    Releases the reservation so stars return to available balance.
+
+    Returns True if a reservation was found and cancelled, False otherwise.
+    Idempotent (same guard as commit_by_run_id).
+    """
+    settled = await db.execute(
+        select(UsageLedger).where(
+            UsageLedger.run_id == run_id,
+            UsageLedger.kind.in_(["charge", "refund"]),
+        ).limit(1)
+    )
+    if settled.scalar_one_or_none() is not None:
+        return False
+
+    result = await db.execute(
+        select(UsageLedger).where(
+            UsageLedger.run_id == run_id,
+            UsageLedger.kind == "reserve",
+        ).limit(1)
+    )
+    entry = result.scalar_one_or_none()
+    if entry is None:
+        return False
+
+    stars = abs(entry.stars)
+    await cancel_reservation(
+        db,
+        wallet_id=entry.wallet_id,
+        telegram_id=telegram_id,
+        stars_reserved=stars,
+        run_id=run_id,
+        service_id=entry.service_id,
+        operation=entry.operation,
+    )
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 

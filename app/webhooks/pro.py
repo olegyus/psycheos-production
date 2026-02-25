@@ -18,7 +18,7 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 
 from app.config import settings
 from app.webhooks.common import upsert_chat_state
@@ -29,7 +29,10 @@ from app.models.context import Context
 from app.models.artifact import Artifact
 from app.services.job_queue import enqueue
 from app.services.links import issue_link
-from app.services.billing import get_or_create_wallet, credit_stars
+from app.services.billing import (
+    get_or_create_wallet, credit_stars,
+    reserve_stars, get_stars_price, InsufficientBalance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -688,7 +691,10 @@ async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
 
 
 async def handle_launch_tool(query, bot, db, chat_id, user_id, service_id, context_id_str):
-    """Issue a link token and send the deep link to the specialist."""
+    """
+    Issue a link token and send the deep link to the specialist.
+    Phase 7: checks Stars balance; sends an invoice if insufficient.
+    """
     if service_id not in _TOOL_LABELS:
         await query.answer("Неизвестный инструмент.", show_alert=True)
         return
@@ -714,6 +720,35 @@ async def handle_launch_tool(query, bot, db, chat_id, user_id, service_id, conte
         await query.answer("Нет доступа к этому кейсу.", show_alert=True)
         return
 
+    # ── Billing: check Stars balance ──────────────────────────────────────────
+    stars_price = await get_stars_price(db, service_id)
+    wallet = None
+    if stars_price is not None:
+        wallet = await get_or_create_wallet(db, user.user_id, user_id)
+        available = wallet.balance_stars - wallet.reserved_stars
+        if available < stars_price:
+            shortfall = stars_price - available
+            # Suggest top-up: round up to nearest 10, minimum 10 Stars
+            top_up = max(10, ((shortfall + 9) // 10) * 10)
+            label = _TOOL_LABELS[service_id]
+            await query.answer()
+            await bot.send_invoice(
+                chat_id=chat_id,
+                title=f"Запуск «{label}»",
+                description=(
+                    f"Для запуска необходимо {stars_price}⭐.\n"
+                    f"Ваш баланс: {available}⭐  |  Не хватает: {shortfall}⭐"
+                ),
+                payload=f"topup:{user_id}",
+                currency="XTR",
+                prices=[LabeledPrice(
+                    label=f"PsycheOS Stars ×{top_up}",
+                    amount=top_up,
+                )],
+            )
+            return
+
+    # ── Issue link token ──────────────────────────────────────────────────────
     token = await issue_link(
         db,
         service_id=service_id,
@@ -721,6 +756,13 @@ async def handle_launch_tool(query, bot, db, chat_id, user_id, service_id, conte
         role="specialist",
         subject_id=user_id,
     )
+
+    # ── Reserve Stars for this session (run_id = link_token.jti) ─────────────
+    if stars_price is not None and wallet is not None:
+        await reserve_stars(
+            db, wallet, user_id, stars_price,
+            run_id=token.jti, service_id=service_id,
+        )
 
     deep_link = f"https://t.me/{username}?start={token.jti}"
     label = _TOOL_LABELS[service_id]
