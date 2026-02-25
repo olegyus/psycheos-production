@@ -111,6 +111,9 @@ def extract_chat_id(update: Update) -> int | None:
         return update.callback_query.message.chat_id
     if update.edited_message:
         return update.edited_message.chat_id
+    # pre_checkout_query has no chat_id — use the user's own ID (private chats only)
+    if update.pre_checkout_query:
+        return update.pre_checkout_query.from_user.id
     return None
 
 
@@ -122,4 +125,6 @@ def extract_user_id(update: Update) -> int | None:
         return update.callback_query.from_user.id if update.callback_query.from_user else None
     if update.edited_message:
         return update.edited_message.from_user.id if update.edited_message.from_user else None
+    if update.pre_checkout_query:
+        return update.pre_checkout_query.from_user.id
     return None

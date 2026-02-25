@@ -29,6 +29,7 @@ from app.models.context import Context
 from app.models.artifact import Artifact
 from app.services.job_queue import enqueue
 from app.services.links import issue_link
+from app.services.billing import get_or_create_wallet, credit_stars
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,16 @@ async def handle_pro(
     chat_id: int,
     user_id: int | None,
 ) -> None:
+    # ── Telegram Stars payment events ────────────────────────────────────────
+    if update.pre_checkout_query:
+        # Must answer within 10 s — auto-approve all PsycheOS invoices.
+        await update.pre_checkout_query.answer(ok=True)
+        return
+
+    if update.message and update.message.successful_payment:
+        await handle_successful_payment(update, bot, db, chat_id, user_id)
+        return
+
     if update.message and update.message.text:
         await handle_text(update, bot, db, state, chat_id, user_id)
         return
@@ -489,6 +500,43 @@ async def handle_callback(
             reply_markup=back_to_admin_kb(), parse_mode="Markdown",
         )
         return
+
+
+# ──────────────────── Payment Handlers ────────────────────
+
+async def handle_successful_payment(
+    update: Update, bot: Bot, db: AsyncSession, chat_id: int, user_id: int | None,
+) -> None:
+    """Credit the user's wallet after a successful Telegram Stars purchase."""
+    if user_id is None:
+        return
+
+    payment = update.message.successful_payment
+    stars = payment.total_amount          # XTR: 1 unit = 1 Star
+    charge_id = payment.provider_payment_charge_id
+
+    user = await get_user_by_tg(db, user_id)
+    if not user:
+        logger.warning("successful_payment: unknown user tg_id=%d", user_id)
+        return
+
+    wallet = await get_or_create_wallet(db, user.user_id, user_id)
+    await credit_stars(
+        db, wallet, user_id, stars, kind="topup",
+        payment_charge_id=charge_id,
+        note="Stars purchase via Telegram",
+    )
+
+    new_balance = wallet.balance_stars
+    await bot.send_message(
+        chat_id=chat_id,
+        text=f"✅ Оплата получена!\n\n"
+             f"Начислено: {stars}⭐\n"
+             f"Ваш баланс: {new_balance}⭐\n\n"
+             f"Теперь вы можете запустить инструменты PsycheOS.",
+        reply_markup=main_menu_kb(),
+    )
+    logger.info("topup: tg_id=%d stars=%d charge_id=%s", user_id, stars, charge_id)
 
 
 # ──────────────────── FSM Actions ────────────────────
