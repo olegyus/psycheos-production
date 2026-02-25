@@ -19,9 +19,9 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    """Use DATABASE_URL (direct connection) — never the pooler."""
+    """Use DATABASE_URL_DIRECT (port 5432) — bypasses PgBouncer, required by Alembic."""
     from app.config import settings
-    return settings.DATABASE_URL
+    return settings.DATABASE_URL_DIRECT
 
 
 def run_migrations_offline() -> None:
