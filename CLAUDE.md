@@ -10,7 +10,7 @@ PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for 
 - **AI**: Anthropic Claude API (integrated in future phases)
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
-- **Current phase**: Phase 6 done (Worker + Outbox ✅) → Phase 6b Screen v2 next
+- **Current phase**: Phase 7 done (Billing ✅) → Phase 6b Screen v2 next
 
 ---
 
@@ -31,7 +31,10 @@ psycheos-production/
 │   │   ├── link_token.py     # Link tokens (Phase 3) — table: link_tokens
 │   │   ├── artifact.py       # Tool-bot outputs (Phase 5) — table: artifacts
 │   │   ├── job.py            # Async job queue (Phase 6) — table: jobs
-│   │   └── outbox_message.py # Telegram outbox (Phase 6) — table: outbox_messages
+│   │   ├── outbox_message.py # Telegram outbox (Phase 6) — table: outbox_messages
+│   │   ├── wallet.py         # Per-user Stars balance (Phase 7) — table: wallets
+│   │   ├── usage_ledger.py   # Stars audit log (Phase 7) — table: usage_ledger
+│   │   └── ai_rate.py        # Pre-calc pricing (Phase 7) — table: ai_rates
 │   ├── webhooks/
 │   │   ├── router_factory.py    # Generic webhook router factory (shared pipeline)
 │   │   ├── common.py            # Shared logic: secret verify, dedup, FSM load/save
@@ -52,7 +55,8 @@ psycheos-production/
 │   │   │   └── reference_prompt.py  #   REFERENCE_SYSTEM_PROMPT (loads key_psycheos.md)
 │   │   ├── job_queue.py         # enqueue / claim_next / mark_done / mark_failed
 │   │   ├── outbox.py            # enqueue_message / dispatch_one / make_inline_keyboard / make_document_payload
-│   │   └── artifacts.py         # save_artifact — ON CONFLICT DO NOTHING
+│   │   ├── artifacts.py         # save_artifact — ON CONFLICT DO NOTHING
+│   │   └── billing.py           # Stars accounting: reserve/commit/cancel/credit; commit_by_run_id / cancel_by_run_id
 │   ├── worker/
 │   │   ├── __init__.py          # Package marker
 │   │   ├── __main__.py          # Entry point: python -m app.worker (event loop)
@@ -346,7 +350,7 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 | **5**      | **Artifacts — persistent storage of tool outputs; HTTP API; Pro bot integration**  | ✅ **Done**     |
 | **6**      | **Worker + Outbox — async Claude jobs; webhooks return instant ack**               | ✅ **Done**     |
 | 6b         | Screen v2 — new question bank, scales, client session flow                         | Planned         |
-| 7          | Pro v2 — billing (Telegram Stars), full hub integration                            | Planned         |
+| **7**      | **Billing — Telegram Stars: wallets, reserve/commit/cancel, admin finance UI**     | ✅ **Done**     |
 
 ---
 
@@ -364,7 +368,7 @@ No authentication required. Used by Railway for healthchecks.
 
 | Бот              | Статус                      | Примечание                                                                                                         |
 |------------------|-----------------------------|--------------------------------------------------------------------------------------------------------------------|
-| Pro              | ✅ Phase 6 done             | reference_chat → worker (enqueue). Webhook мгновенно отвечает "⏳". v2 (биллинг, Hub) — Phase 7                  |
+| Pro              | ✅ Phase 7 done             | Stars billing: reserve при launch, commit/cancel через worker. successful_payment → credit_stars. Админ: финансы + начисление Stars |
 | Screen           | Stub → Phase 6b             | Новый банк вопросов, шкалы и логика работы — Phase 6b                                                             |
 | Interpreter      | ✅ Phase 6 async            | Webhook enqueue interp_photo / interp_intake / interp_run. Результаты через outbox                                |
 | Conceptualizer   | ✅ Phase 6 async            | Webhook enqueue concept_hypothesis / concept_output. Layer A/B/C через outbox                                     |
@@ -380,8 +384,8 @@ No authentication required. Used by Railway for healthchecks.
 4. ✅ Sprint B — Pro Справочник (`app/services/pro/reference_prompt.py`, `reference_chat` FSM)
 5. ✅ **Phase 5 — Artifacts** (`artifacts` table, `save_artifact` service, hooks in 3 bots, `GET /v1/artifacts` API, Pro bot UI)
 6. ✅ **Phase 6 — Worker + Outbox** (`jobs` + `outbox_messages` tables, `app/worker/`, рефакторинг 4 webhook-обработчиков, Procfile `worker:`)
-7. ⬜ Phase 6b — Screen v2 — новый банк вопросов + логика
-8. ⬜ Phase 7 — Pro v2 — биллинг (Telegram Stars), Hub
+7. ✅ **Phase 7 — Billing** (`wallets`, `usage_ledger`, `ai_rates` tables; `app/services/billing.py`; Stars reserve/commit/cancel в Pro + worker)
+8. ⬜ Phase 6b — Screen v2 — новый банк вопросов + логика
 
 ---
 
@@ -419,3 +423,12 @@ No authentication required. Used by Railway for healthchecks.
 - **Worker — chained jobs:** `interp_intake` при принятии материала enqueue-ит `interp_run`. `concept_hypothesis` при `should_continue=False` enqueue-ит `concept_output`. Цепочки формируются внутри worker-обработчиков, не в webhook
 - **Worker — job payload:** всегда содержит `state_payload` (dict из `bot_chat_state`) и `role`. Доп. поля: `image_b64`/`image_media_type` (interp_photo), `run_mode` (interp_run retry), `session` (conceptualizer/simulator), `message_text` (concept_hypothesis), `case_key`/`goal`/`mode`/`crisis` (sim_launch), `custom_data`/`crisis_value` (sim_launch_custom)
 - **Worker — Procfile:** `worker: python -m app.worker`. На Railway — отдельный process type. Один воркер достаточен для ≤30 пользователей. Масштабировать горизонтально при росте нагрузки (FOR UPDATE SKIP LOCKED безопасен для N воркеров)
+- **Billing — две фазы:** reserve при запуске инструмента (reserved_stars += N), commit при успехе terminal-job (balance -= N, reserved -= N, lifetime_out += N), cancel при permanent failure (reserved -= N). `available = balance_stars − reserved_stars`. Источник правды — колонки `wallets`, не сумма ledger
+- **Billing — run_id как ключ:** резервирование привязывается к `link_token.jti` (UUID). Worker ищет `usage_ledger WHERE kind='reserve' AND run_id=run_id` для commit/cancel. Не требует изменений в link_token или job payload
+- **Billing — idempotency:** `commit_by_run_id` / `cancel_by_run_id` сначала проверяют наличие `kind IN ('charge','refund')` для run_id — повторный вызов → return False без изменений
+- **Billing — TERMINAL_JOB_TYPES:** `{interp_run, concept_output, sim_launch, sim_launch_custom}` — только эти типы триггерят commit/cancel. Промежуточные (interp_photo, interp_intake, concept_hypothesis) — нет
+- **Billing — ai_rates seed:** interpretator/session=20⭐, conceptualizator/session=12⭐, simulator/session=15⭐, simulator/active_turn=3⭐, pro/reference=1⭐. Цены pre-calculated по формуле `ceil((in × in_$/tok + out × out_$/tok + total × 2/1M) × 1.2 / 0.01)`. Обновление цены = UPDATE ai_rates (без кода)
+- **Billing — invoice при нехватке Stars:** `handle_launch_tool()` вызывает `bot.send_invoice(currency="XTR")`. Сумма = max(10, ceil(shortfall/10)×10). payload=`"topup:{user_id}"`. pre_checkout_query → auto-approve. successful_payment → `credit_stars(kind="topup")`
+- **Billing — admin credit:** FSM state `waiting_admin_credit`. Формат ввода `telegram_id:stars`. `credit_stars(kind="admin_credit")` без проверки лимита. Доступно только из `settings.admin_ids`
+- **Billing — без бесплатных fallback:** если запись в `ai_rates` отсутствует (`get_stars_price → None`) — инструмент запускается бесплатно (backward-compat). Это осознанное решение, не ошибка
+- **extract_chat_id / pre_checkout_query:** `from_user.id` используется как `chat_id` для pre_checkout_query (в приватных чатах chat_id == user_id). Дедупликация по update_id работает корректно
