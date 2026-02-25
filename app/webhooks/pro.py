@@ -27,6 +27,8 @@ from app.models.user import User
 from app.models.invite import Invite
 from app.models.context import Context
 from app.models.artifact import Artifact
+from app.models.wallet import Wallet
+from app.models.usage_ledger import UsageLedger
 from app.services.job_queue import enqueue
 from app.services.links import issue_link
 from app.services.billing import (
@@ -104,6 +106,7 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🔗 Создать приглашение", callback_data="adm_invite_new")],
         [InlineKeyboardButton("👥 Пользователи", callback_data="adm_users")],
         [InlineKeyboardButton("📊 Финансы", callback_data="adm_finance")],
+        [InlineKeyboardButton("💳 Начислить Stars", callback_data="adm_credit_new")],
         [InlineKeyboardButton("◀️ Назад", callback_data="main_menu")],
     ])
 
@@ -234,6 +237,12 @@ async def handle_text(
     # ── FSM: reference chat ──
     if state and state.state == "reference_chat":
         await handle_reference_chat(bot, db, state, chat_id, user_id, text)
+        return
+
+    # ── FSM: admin credit input ──
+    if state and state.state == "waiting_admin_credit":
+        if is_admin(user_id):
+            await handle_admin_credit_input(bot, db, chat_id, user_id, text)
         return
 
     # ── Default ──
@@ -494,13 +503,65 @@ async def handle_callback(
     if data == "adm_finance":
         if not is_admin(user_id):
             return
+        # Aggregate wallet stats
+        agg = await db.execute(
+            select(
+                func.count(Wallet.wallet_id),
+                func.coalesce(func.sum(Wallet.balance_stars), 0),
+                func.coalesce(func.sum(Wallet.reserved_stars), 0),
+                func.coalesce(func.sum(Wallet.lifetime_out), 0),
+                func.coalesce(func.sum(Wallet.lifetime_in), 0),
+            )
+        )
+        w_count, total_bal, total_res, total_out, total_in = agg.one()
+        available_total = total_bal - total_res
+
+        # Recent charges (last 7)
+        recent_q = await db.execute(
+            select(UsageLedger)
+            .where(UsageLedger.kind == "charge")
+            .order_by(UsageLedger.created_at.desc())
+            .limit(7)
+        )
+        recent = recent_q.scalars().all()
+
+        lines = [
+            "📊 *Финансы*\n",
+            f"👥 Кошельков: {w_count}",
+            f"💰 Суммарный баланс: {total_bal}⭐",
+            f"🔓 Доступно (без резерва): {available_total}⭐",
+            f"🔒 Зарезервировано: {total_res}⭐",
+            f"📥 Всего пополнено: {total_in}⭐",
+            f"💸 Всего потрачено: {total_out}⭐",
+        ]
+        if recent:
+            lines.append("\n*Последние списания:*")
+            for e in recent:
+                date_str = e.created_at.strftime("%d.%m %H:%M")
+                svc = e.service_id or "—"
+                lines.append(f"• {date_str}  {svc}  {abs(e.stars)}⭐  #{e.telegram_id}")
+
         await query.edit_message_text(
-            text="📊 *Финансы*\n\n"
-                 "_Будет доступно после подключения биллинга (Фаза 7)._\n\n"
-                 "• Total Stars Liability: —\n"
-                 "• Available Stars: —\n"
-                 "• Burn Rate: —",
-            reply_markup=back_to_admin_kb(), parse_mode="Markdown",
+            text="\n".join(lines),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💳 Начислить Stars", callback_data="adm_credit_new")],
+                [InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")],
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+    if data == "adm_credit_new":
+        if not is_admin(user_id):
+            return
+        await upsert_chat_state(db, "pro", chat_id, "waiting_admin_credit", user_id=user_id)
+        await query.edit_message_text(
+            text="💳 *Начисление Stars*\n\n"
+                 "Введите Telegram ID и количество Stars через двоеточие:\n\n"
+                 "`123456789:100`\n\n"
+                 "_Минимум: 1 Star. Изменение необратимо._",
+            reply_markup=back_to_admin_kb(),
+            parse_mode="Markdown",
         )
         return
 
@@ -801,6 +862,58 @@ async def create_invite_with_note(bot, db, chat_id, user_id, note):
              f"Ссылка:\n`{link}`",
         reply_markup=admin_menu_kb(), parse_mode="Markdown",
     )
+
+
+async def handle_admin_credit_input(bot, db, chat_id, user_id, text: str) -> None:
+    """
+    FSM handler for waiting_admin_credit state.
+    Parses 'telegram_id:stars' and credits the target user's wallet.
+    """
+    try:
+        parts = text.strip().split(":")
+        if len(parts) != 2:
+            raise ValueError("wrong format")
+        target_tg_id = int(parts[0].strip())
+        stars = int(parts[1].strip())
+        if stars <= 0:
+            raise ValueError("stars must be positive")
+    except ValueError:
+        await bot.send_message(
+            chat_id=chat_id,
+            text="❌ Неверный формат.\n\nВведите: `telegram_id:stars`\nПример: `123456789:100`",
+            parse_mode="Markdown",
+            reply_markup=back_to_admin_kb(),
+        )
+        return
+
+    target_user = await get_user_by_tg(db, target_tg_id)
+    if not target_user:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f"❌ Пользователь `{target_tg_id}` не найден в системе.",
+            parse_mode="Markdown",
+            reply_markup=back_to_admin_kb(),
+        )
+        return
+
+    wallet = await get_or_create_wallet(db, target_user.user_id, target_tg_id)
+    await credit_stars(
+        db, wallet, target_tg_id, stars, kind="admin_credit",
+        note=f"Admin credit by tg:{user_id}",
+    )
+
+    name = target_user.full_name or target_user.username or str(target_tg_id)
+    new_balance = wallet.balance_stars
+
+    await upsert_chat_state(db, "pro", chat_id, "admin_panel", user_id=user_id)
+    await bot.send_message(
+        chat_id=chat_id,
+        text=f"✅ Начислено *{stars}⭐* пользователю {name}\n\n"
+             f"Новый баланс: {new_balance}⭐",
+        parse_mode="Markdown",
+        reply_markup=admin_menu_kb(),
+    )
+    logger.info("admin_credit: by=%d → to=%d stars=%d", user_id, target_tg_id, stars)
 
 
 # ──────────────────── Artifacts UI ────────────────────
