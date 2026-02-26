@@ -122,7 +122,7 @@ async def _handle_text(
     bot: Bot, db: AsyncSession, text: str,
     state: BotChatState | None, chat_id: int, user_id: int | None,
 ) -> None:
-    if state is None or state.state not in ("active", "intake"):
+    if state is None or state.state not in ("active", "intake", "clarification_loop"):
         if state and state.state == "completed":
             await bot.send_message(
                 chat_id=chat_id,
@@ -140,6 +140,9 @@ async def _handle_text(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "content": text,
     })
+    # When specialist answers any clarifying question, record it separately
+    if state.state in ("intake", "clarification_loop"):
+        payload.setdefault("clarifications_received", []).append(text)
 
     # Persist state with new material before enqueuing (data safety).
     await upsert_chat_state(
@@ -156,7 +159,6 @@ async def _handle_text(
     )
 
     await bot.send_message(chat_id=chat_id, text="⏳ Анализирую материал...")
-
 
 # ── Photo handling ────────────────────────────────────────────────────────────
 
