@@ -42,13 +42,9 @@ if settings.SENTRY_DSN:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting PsycheOS Backend...")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database tables ensured.")
     yield
     logger.info("Shutting down PsycheOS Backend...")
     await engine.dispose()
-
 
 # --- App ---
 app = FastAPI(
