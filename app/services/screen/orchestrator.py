@@ -425,7 +425,6 @@ class ScreenOrchestrator:
                 system=system,
                 messages=[{"role": "user", "content": user_content}],
                 temperature=0.3,
-                top_p=0.8,
             )
             return resp.content[0].text
         except Exception:
