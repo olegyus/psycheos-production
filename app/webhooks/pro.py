@@ -674,6 +674,8 @@ async def handle_case_archive(query, db, user_id, context_id_str):
 
     user = await get_user_by_tg(db, user_id)
     if not user or ctx.specialist_user_id != user.user_id:
+
+
         await query.answer("Нет доступа к этому кейсу.", show_alert=True)
         return
 
@@ -720,53 +722,13 @@ _TOOL_LABELS = {
 
 
 async def handle_screen_menu(query, bot, db, chat_id, context_id_str):
-    """Show Screen v2 status and action buttons for a case."""
-    try:
-        context_id = uuid.UUID(context_id_str)
-    except ValueError:
-        await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
-        return
-    result = await db.execute(
-        select(ScreeningAssessment)
-        .where(ScreeningAssessment.context_id == context_id)
-        .order_by(ScreeningAssessment.created_at.desc())
-        .limit(1)
-    )
-    assessment = result.scalar_one_or_none()
-    if not assessment:
-        status_text = "Скрининг ещё не проводился."
-        buttons = [
-            [InlineKeyboardButton("🚀 Создать скрининг", callback_data=f"screen_create_{context_id_str}")],
-            [InlineKeyboardButton("◀️ Назад", callback_data=f"case_{context_id_str}")],
-        ]
-    elif assessment.status == "completed":
-        date_str = assessment.completed_at.strftime("%d.%m.%Y") if assessment.completed_at else "—"
-        status_text = f"✅ Скрининг завершён\nДата: {date_str}"
-        buttons = [
-            [InlineKeyboardButton("📄 Результаты", callback_data=f"screen_results_{assessment.id}")],
-            [InlineKeyboardButton("🔄 Новый скрининг", callback_data=f"screen_create_{context_id_str}")],
-            [InlineKeyboardButton("◀️ Назад", callback_data=f"case_{context_id_str}")],
-        ]
-    elif assessment.status == "in_progress":
-        status_text = f"🔄 Скрининг в процессе (Фаза {assessment.phase})"
-        buttons = [
-            [InlineKeyboardButton("◀️ Назад", callback_data=f"case_{context_id_str}")],
-        ]
-    else:
-        status_text = "📋 Скрининг создан, ожидает клиента."
-        buttons = [
-            [InlineKeyboardButton("🔄 Новый скрининг", callback_data=f"screen_create_{context_id_str}")],
-            [InlineKeyboardButton("◀️ Назад", callback_data=f"case_{context_id_str}")],
-        ]
-    await query.edit_message_text(
-        text=f"📊 *Скрининг*\n\n{status_text}",
-        reply_markup=InlineKeyboardMarkup(buttons),
-        parse_mode="Markdown",
-    )
+    """Screen v2 — not yet implemented."""
+    await query.answer("Скрининг в разработке.", show_alert=True)
 
 
 async def handle_screen_create(query, bot, db, chat_id, user_id, context_id_str):
-    """Create a new ScreeningAssessment + issue an open client LinkToken."""
+    """Screen v2 — not yet implemented."""
+    await query.answer("Скрининг в разработке.", show_alert=True)
 
 
 async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
@@ -775,13 +737,11 @@ async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
     if not username:
         await query.answer("Screen не настроен. Обратитесь к администратору.", show_alert=True)
         return
-
     try:
         context_id = uuid.UUID(context_id_str)
     except ValueError:
         await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
         return
-
     result = await db.execute(select(Context).where(Context.context_id == context_id))
     ctx = result.scalar_one_or_none()
     if not ctx:
@@ -791,14 +751,6 @@ async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
     if not user or ctx.specialist_user_id != user.user_id:
         await query.answer("Нет доступа к этому кейсу.", show_alert=True)
         return
-    assessment = ScreeningAssessment(
-        context_id=context_id,
-        specialist_user_id=user_id,
-        status="created",
-    )
-    db.add(assessment)
-    await db.flush()  # populate assessment.id
-    # subject_id=0 — open token: client's Telegram ID unknown at issue time
     token = await issue_link(
         db,
         service_id="screen",
@@ -806,16 +758,11 @@ async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
         role="client",
         subject_id=0,
     )
-
-    assessment.link_token_jti = token.jti
-    await db.flush()
-
     deep_link = f"https://t.me/{username}?start={token.jti}"
-
     await query.edit_message_text(
         text=(
-            f"✅ *Скрининг создан*\n\n"
-            f"Отправьте клиенту ссылку:\n`{deep_link}`\n\n"
+            f"✅ *Ссылка для клиента*\n\n"
+            f"`{deep_link}`\n\n"
             f"_Ссылка действует 24 часа._"
         ),
         reply_markup=InlineKeyboardMarkup([
@@ -825,28 +772,9 @@ async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
         parse_mode="Markdown",
     )
 
-
 async def handle_screen_results(query, bot, db, chat_id, assessment_id_str):
-    """Send the completed screening report as txt, json, and docx files."""
-    try:
-        assessment_id = uuid.UUID(assessment_id_str)
-    except ValueError:
-        await query.answer("Ошибка: неверный ID.", show_alert=True)
-        return
-
-    result = await db.execute(
-        select(ScreeningAssessment).where(ScreeningAssessment.id == assessment_id)
-    )
-    assessment = result.scalar_one_or_none()
-
-    if not assessment or not assessment.report_json:
-        await query.answer("Результаты недоступны.", show_alert=True)
-        return
-
-    report_json = assessment.report_json
-    report_text = assessment.report_text or format_report_txt(report_json)
-
-    await query.answer()
+    """Screen v2 — not yet implemented."""
+    await query.answer("Скрининг в разработке.", show_alert=True)
 
     # Plain-text preview (≤4000 chars to stay within Telegram limit)
     preview = report_text[:4000]
