@@ -10,6 +10,8 @@ Flows:
 - case_{id} → case view with tool launch buttons
 - launch_{service_id}_{context_id} → issue link token → deep link
 """
+import io
+import json
 import logging
 import secrets
 import uuid
@@ -26,11 +28,13 @@ from app.models.bot_chat_state import BotChatState
 from app.models.user import User
 from app.models.invite import Invite
 from app.models.context import Context
+from app.models.screening_assessment import ScreeningAssessment
 from app.models.artifact import Artifact
 from app.models.wallet import Wallet
 from app.models.usage_ledger import UsageLedger
 from app.services.job_queue import enqueue
 from app.services.links import issue_link
+from app.services.screen.report import format_report_txt, generate_report_docx
 from app.services.billing import (
     get_or_create_wallet, credit_stars,
     reserve_stars, get_stars_price, InsufficientBalance,
@@ -135,6 +139,7 @@ def case_tools_kb(context_id: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🧠 Интерпретатор",    callback_data=f"launch_interpretator_{context_id}")],
         [InlineKeyboardButton("💡 Концептуализатор", callback_data=f"launch_conceptualizator_{context_id}")],
         [InlineKeyboardButton("🎭 Симулятор",        callback_data=f"launch_simulator_{context_id}")],
+        [InlineKeyboardButton("📊 Скрининг",           callback_data=f"screen_menu_{context_id}")],
         [InlineKeyboardButton("📊 История результатов", callback_data=f"case_artifacts_{context_id}")],
         [InlineKeyboardButton("📤 Ссылка для клиента", callback_data=f"screen_link_{context_id}")],
         [InlineKeyboardButton("🗄 Архивировать",     callback_data=f"case_archive_{context_id}")],
@@ -431,11 +436,22 @@ async def handle_callback(
         await handle_launch_tool(query, bot, db, chat_id, user_id, service_id, context_id_str)
         return
 
+    if data.startswith("screen_menu_"):
+        context_id_str = data[len("screen_menu_"):]
+        await handle_screen_menu(query, bot, db, chat_id, context_id_str)
+        return
+    if data.startswith("screen_create_"):
+        context_id_str = data[len("screen_create_"):]
+        await handle_screen_create(query, bot, db, chat_id, user_id, context_id_str)
+        return
+    if data.startswith("screen_results_"):
+        assessment_id_str = data[len("screen_results_"):]
+        await handle_screen_results(query, bot, db, chat_id, assessment_id_str)
+        return
     if data.startswith("screen_link_"):
         context_id_str = data[len("screen_link_"):]
         await handle_screen_link(query, bot, db, chat_id, user_id, context_id_str)
         return
-
     # ── Reference chat ──
     if data == "open_reference":
         user = await get_user_by_tg(db, user_id)
@@ -454,7 +470,6 @@ async def handle_callback(
             parse_mode="Markdown",
         )
         return
-
     if data == "exit_reference":
         await upsert_chat_state(db, "pro", chat_id, "main_menu", user_id=user_id)
         await query.edit_message_text(
@@ -659,6 +674,8 @@ async def handle_case_archive(query, db, user_id, context_id_str):
 
     user = await get_user_by_tg(db, user_id)
     if not user or ctx.specialist_user_id != user.user_id:
+
+
         await query.answer("Нет доступа к этому кейсу.", show_alert=True)
         return
 
@@ -715,13 +732,75 @@ async def handle_screen_create(query, bot, db, chat_id, user_id, context_id_str)
 
 
 async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
-    """Screen v2 — not yet implemented."""
-    await query.answer("Скрининг в разработке.", show_alert=True)
-
+    """Issue an open client token for Screen and send the link to the specialist."""
+    username = settings.tool_bot_usernames.get("screen", "")
+    if not username:
+        await query.answer("Screen не настроен. Обратитесь к администратору.", show_alert=True)
+        return
+    try:
+        context_id = uuid.UUID(context_id_str)
+    except ValueError:
+        await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
+        return
+    result = await db.execute(select(Context).where(Context.context_id == context_id))
+    ctx = result.scalar_one_or_none()
+    if not ctx:
+        await query.answer("Кейс не найден.", show_alert=True)
+        return
+    user = await get_user_by_tg(db, user_id)
+    if not user or ctx.specialist_user_id != user.user_id:
+        await query.answer("Нет доступа к этому кейсу.", show_alert=True)
+        return
+    token = await issue_link(
+        db,
+        service_id="screen",
+        context_id=context_id,
+        role="client",
+        subject_id=0,
+    )
+    deep_link = f"https://t.me/{username}?start={token.jti}"
+    await query.edit_message_text(
+        text=(
+            f"✅ *Ссылка для клиента*\n\n"
+            f"`{deep_link}`\n\n"
+            f"_Ссылка действует 24 часа._"
+        ),
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("▶️ Открыть Screen", url=deep_link)],
+            [InlineKeyboardButton("◀️ Назад к кейсу", callback_data=f"case_{context_id_str}")],
+        ]),
+        parse_mode="Markdown",
+    )
 
 async def handle_screen_results(query, bot, db, chat_id, assessment_id_str):
     """Screen v2 — not yet implemented."""
     await query.answer("Скрининг в разработке.", show_alert=True)
+
+    # Plain-text preview (≤4000 chars to stay within Telegram limit)
+    preview = report_text[:4000]
+    await bot.send_message(
+        chat_id=chat_id,
+        text=f"```\n{preview}\n```",
+        parse_mode="Markdown",
+    )
+
+    # JSON file
+    json_bytes = json.dumps(report_json, ensure_ascii=False, indent=2).encode("utf-8")
+    await bot.send_document(
+        chat_id=chat_id,
+        document=io.BytesIO(json_bytes),
+        filename="screening_report.json",
+        caption="Отчёт в формате JSON",
+    )
+
+    # DOCX file
+    docx_bytes = await generate_report_docx(report_json)
+    await bot.send_document(
+        chat_id=chat_id,
+        document=io.BytesIO(docx_bytes),
+        filename="screening_report.docx",
+        caption="Отчёт в формате DOCX",
+    )
 
 
 async def handle_launch_tool(query, bot, db, chat_id, user_id, service_id, context_id_str):

@@ -7,10 +7,10 @@ PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for 
 - **Framework**: FastAPI + async SQLAlchemy (asyncpg)
 - **Database**: PostgreSQL via Supabase (connection pooler in production)
 - **Telegram**: `python-telegram-bot` 21.x (webhook mode only, no polling)
-- **AI**: Anthropic Claude API (integrated in future phases)
+- **AI**: Anthropic Claude API ✅ интегрирован — Simulator, Conceptualizer, Interpreter используют `claude-sonnet-4-5-20250929`; Screen v2 — при генерации отчёта
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
-- **Current phase**: Phase 7 done (Billing ✅) → Phase 6b Screen v2 next
+- **Current phase**: Phase 6 **COMPLETE** — Screen UX/bug fixes ✅ + Interpreter Claude gaps filled ✅; next: Phase 7
 
 ---
 
@@ -23,26 +23,21 @@ psycheos-production/
 │   ├── config.py             # All settings via pydantic-settings (env vars)
 │   ├── database.py           # Async SQLAlchemy engine + session factory
 │   ├── models/
-│   │   ├── user.py           # User (specialist/client) — table: users
-│   │   ├── invite.py         # Invite tokens — table: invites
-│   │   ├── context.py        # Case/client context — table: contexts
-│   │   ├── bot_chat_state.py # FSM state per (bot, chat) — table: bot_chat_state
-│   │   ├── telegram_dedup.py # Dedup table — table: telegram_update_dedup
-│   │   ├── link_token.py     # Link tokens (Phase 3) — table: link_tokens
-│   │   ├── artifact.py       # Tool-bot outputs (Phase 5) — table: artifacts
-│   │   ├── job.py            # Async job queue (Phase 6) — table: jobs
-│   │   ├── outbox_message.py # Telegram outbox (Phase 6) — table: outbox_messages
-│   │   ├── wallet.py         # Per-user Stars balance (Phase 7) — table: wallets
-│   │   ├── usage_ledger.py   # Stars audit log (Phase 7) — table: usage_ledger
-│   │   └── ai_rate.py        # Pre-calc pricing (Phase 7) — table: ai_rates
+│   │   ├── user.py                    # User (specialist/client) — table: users
+│   │   ├── invite.py                  # Invite tokens — table: invites
+│   │   ├── context.py                 # Case/client context — table: contexts
+│   │   ├── bot_chat_state.py          # FSM state per (bot, chat) — table: bot_chat_state
+│   │   ├── telegram_dedup.py          # Dedup table — table: telegram_update_dedup
+│   │   └── screening_assessment.py    # Screen v2 assessment — table: screening_assessment ✅
 │   ├── webhooks/
 │   │   ├── router_factory.py    # Generic webhook router factory (shared pipeline)
 │   │   ├── common.py            # Shared logic: secret verify, dedup, FSM load/save
 │   │   ├── pro.py               # Pro bot handler (Phase 2 — full implementation)
 │   │   ├── interpretator.py     # Interpretator bot (Phase 4 ✅ migrated)
 │   │   ├── conceptualizator.py  # Conceptualizator bot (Phase 4 ✅ migrated)
-│   │   ├── stubs.py             # Screen (stub)
-│   │   └── simulator.py         # Simulator bot handler
+│   │   ├── screen.py            # Screen v2 bot — full FSM handler ✅
+│   │   ├── simulator.py         # Simulator bot — full FSM handler ✅
+│   │   └── stubs.py             # (пустой — все боты мигрированы)
 │   ├── services/
 │   │   ├── interpreter/         # Interpreter service modules
 │   │   ├── conceptualizer/      # Conceptualizer service modules
@@ -51,30 +46,27 @@ psycheos-production/
 │   │   │   ├── decision_policy.py #  PriorityChecker + QuestionGenerator + selector
 │   │   │   ├── analysis.py      #   Async hypothesis extraction via Claude
 │   │   │   └── output.py        #   Async three-layer output assembly via Claude
-│   │   ├── pro/                 # Pro bot services (Sprint B+)
-│   │   │   └── reference_prompt.py  #   REFERENCE_SYSTEM_PROMPT (loads key_psycheos.md)
-│   │   ├── job_queue.py         # enqueue / claim_next / mark_done / mark_failed
-│   │   ├── outbox.py            # enqueue_message / dispatch_one / make_inline_keyboard / make_document_payload
-│   │   ├── artifacts.py         # save_artifact — ON CONFLICT DO NOTHING
-│   │   └── billing.py           # Stars accounting: reserve/commit/cancel/credit; commit_by_run_id / cancel_by_run_id
-│   ├── worker/
-│   │   ├── __init__.py          # Package marker
-│   │   ├── __main__.py          # Entry point: python -m app.worker (event loop)
-│   │   └── handlers/
-│   │       ├── __init__.py      # REGISTRY dict: job_type → handler
-│   │       ├── pro.py           # handle_pro_reference (Claude Haiku reference chat)
-│   │       ├── interpretator.py # handle_interp_photo / interp_intake / interp_run
-│   │       ├── conceptualizator.py # handle_concept_hypothesis / concept_output
-│   │       └── simulator.py     # handle_sim_launch / sim_launch_custom / sim_report
-│   ├── data/
-│   │   └── key_psycheos.md      # PsycheOS theory base — used by reference chat system prompt
-│   ├── routers/
-│   │   ├── links.py          # POST /v1/links/issue|verify (Phase 3)
-│   │   └── artifacts.py      # GET /v1/artifacts[/{id}] (Phase 5)
+│   │   ├── screen/              # Screen v2 service modules ✅
+│   │   │   ├── engine.py        #   ScreeningEngine: vector aggregation, tension matrix, rigidity, confidence ✅
+│   │   │   ├── weight_matrix.py #   PHASE1_SCREENS (6) + PHASE2_TEMPLATES (20 nodes) with axis/layer weights ✅
+│   │   │   ├── screen_bank.py   #   get_phase1_screen / get_phase2_template / get_all_phase2_nodes ✅
+│   │   │   ├── prompts.py       #   5 Claude prompts (router/constructor/report/session_bridge/stop) + assemble_prompt() ✅
+│   │   │   ├── orchestrator.py  #   ScreenOrchestrator: 3-phase flow, Claude routing, stop decision ✅
+│   │   │   └── report.py        #   generate_full_report / format_report_txt / generate_report_docx ✅
+│   │   └── simulator/           # Simulator service modules ✅
+│   │       ├── schemas.py       #   Pydantic v2: SessionData, FSMState, SpecialistProfile, TSIComponents, …
+│   │       ├── cases.py         #   BUILTIN_CASES (3 встроенных кейса)
+│   │       ├── goals.py         #   GOAL_LABELS, MODE_LABELS
+│   │       ├── system_prompt.py #   build_system_prompt(case, goal, mode) → str
+│   │       ├── formatter.py     #   parse_claude_response, format_for_telegram, build_iteration_log
+│   │       └── report_generator.py # generate_report_docx() → io.BytesIO
 │   └── utils/
 │       └── idempotency.py    # Idempotency key builder (format from Dev Spec Appendix C)
 ├── scripts/
 │   └── set_webhooks.py       # One-shot script to register webhooks with Telegram API
+├── tests/
+│   ├── __init__.py
+│   └── test_engine.py        # 31 unit tests for ScreeningEngine ✅
 ├── Procfile                  # Railway: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
 ├── requirements.txt
 └── .gitignore
@@ -86,11 +78,11 @@ psycheos-production/
 
 | Bot ID            | Role                  | Status       | Handler file      |
 |-------------------|-----------------------|--------------|-------------------|
-| `pro`             | Specialist management | Phase 2 + Sprint B ✅ | `webhooks/pro.py`             |
-| `screen`          | Client-facing         | Stub (Phase 4 next)   | `webhooks/stubs.py`           |
-| `interpretator`   | AI diagnostic tool    | **Phase 4 ✅ done**   | `webhooks/interpretator.py`   |
-| `conceptualizator`| Conceptualization     | **Phase 4 ✅ done**   | `webhooks/conceptualizator.py`|
-| `simulator`       | Simulation            | Phase 4 (migrating)   | `webhooks/simulator.py`       |
+| `pro`             | Specialist management | Phase 2 done       | `webhooks/pro.py`             |
+| `screen`          | Client-facing         | **Phase 4 ✅ done** | `webhooks/screen.py`          |
+| `interpretator`   | AI diagnostic tool    | **Phase 4 ✅ done** | `webhooks/interpretator.py`  |
+| `conceptualizator`| Conceptualization     | **Phase 4 ✅ done** | `webhooks/conceptualizator.py` |
+| `simulator`       | Simulation            | **Phase 4 ✅ done** | `webhooks/simulator.py`       |
 
 Each bot has its own Telegram token and webhook secret, all in env vars.
 
@@ -175,6 +167,19 @@ POST /webhook/{bot_id}
 
 ---
 
+## Interpretator Bot FSM States
+
+| State               | Trigger                             | Description                                                   |
+|---------------------|-------------------------------------|---------------------------------------------------------------|
+| `active`            | `/start {jti}` verified             | Session open; awaiting first material from specialist         |
+| `intake`            | Claude asks clarifying Q in INTAKE  | Awaiting specialist's answer before material check            |
+| `clarification_loop`| `completeness != "sufficient"`      | Material partial/fragmentary; Claude asks phenomenological Qs (max 2 iterations) |
+| `completed`         | Interpretation sent                 | Session closed; further messages rejected                     |
+
+Flow: `active` → specialist types material → `_run_intake` (Claude INTAKE prompt, may set `intake`) → `_run_material_check` (Claude MATERIAL_CHECK prompt) → if sufficient: `_run_interpretation`; else → `clarification_loop` (Claude CLARIFICATION_LOOP prompt, max 2 rounds) → `_run_interpretation` → `completed`.
+
+---
+
 ## Configuration (Environment Variables)
 
 All settings are loaded via pydantic-settings from `.env` file (never committed).
@@ -238,6 +243,8 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 Tables are created automatically on startup via `Base.metadata.create_all` (lifespan event). No migrations needed for new local environments.
+
+**Alembic migrations (production):** На данный момент существует только одна миграция — `0001_create_link_tokens.py`. Таблица `screening_assessment` создана через `create_all` (не через Alembic). Перед следующим `alembic upgrade head` нужно сгенерировать `0002_create_screening_assessment.py`.
 
 ### Database Migrations (Alembic)
 
@@ -340,17 +347,15 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 
 ## Development Phases
 
-| Phase      | Description                                                                        | Status          |
-|------------|------------------------------------------------------------------------------------|-----------------|
-| 1          | Project skeleton, DB schema, webhook pipeline                                      | ✅ Done         |
-| 2          | Pro bot: invite-only registration, cases, admin panel                              | ✅ Done         |
-| 3          | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | ✅ Done         |
-| 4          | Screen/Interpretator/Conceptualizator/Simulator full logic                         | ✅ Done (Interpretator + Conceptualizator ✅; Simulator migrated ✅) |
-| Sprint B   | Pro bot reference chat — Claude Haiku Q&A on PsycheOS theory                      | ✅ Done         |
-| **5**      | **Artifacts — persistent storage of tool outputs; HTTP API; Pro bot integration**  | ✅ **Done**     |
-| **6**      | **Worker + Outbox — async Claude jobs; webhooks return instant ack**               | ✅ **Done**     |
-| 6b         | Screen v2 — new question bank, scales, client session flow                         | Planned         |
-| **7**      | **Billing — Telegram Stars: wallets, reserve/commit/cancel, admin finance UI**     | ✅ **Done**     |
+| Phase | Description                                                                        | Status          |
+|-------|------------------------------------------------------------------------------------|-----------------|
+| 1     | Project skeleton, DB schema, webhook pipeline                                      | Done            |
+| 2     | Pro bot: invite-only registration, cases, admin panel                              | Done            |
+| 3     | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | **Done**        |
+| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **COMPLETE** ✅ (все 5 ботов мигрированы)                                       |
+| 5     | Interpreter Claude gaps: `_run_material_check` + `clarification_loop` FSM state + `clarifications_received` | **COMPLETE** ✅ |
+| 6     | Screen bot: bug fix `_notify_specialist` + `asked_nodes` dedup + UX (typing, phase transitions, Phase 1 progress) | **COMPLETE** ✅ |
+| 7     | Billing (Telegram Stars)                                                           | Planned         |
 
 ---
 
@@ -366,13 +371,13 @@ No authentication required. Used by Railway for healthchecks.
 
 ## Статус ботов (актуальный)
 
-| Бот              | Статус                      | Примечание                                                                                                         |
-|------------------|-----------------------------|--------------------------------------------------------------------------------------------------------------------|
-| Pro              | ✅ Phase 7 done             | Stars billing: reserve при launch, commit/cancel через worker. successful_payment → credit_stars. Админ: финансы + начисление Stars |
-| Screen           | Stub → Phase 6b             | Новый банк вопросов, шкалы и логика работы — Phase 6b                                                             |
-| Interpreter      | ✅ Phase 6 async            | Webhook enqueue interp_photo / interp_intake / interp_run. Результаты через outbox                                |
-| Conceptualizer   | ✅ Phase 6 async            | Webhook enqueue concept_hypothesis / concept_output. Layer A/B/C через outbox                                     |
-| Simulator        | ✅ Phase 6 async            | Launch/report через worker. Активный ход (_handle_specialist_message) — синхронный (trade-off UX)                 |
+| Бот              | Статус                    | Примечание                                                                                                    |
+|------------------|---------------------------|---------------------------------------------------------------------------------------------------------------|
+| Pro              | Требует v2                | Центральный хаб: регистрация, оплата, выход на остальные боты (tool-боты), ИИ-справочник по системе. Текущая версия не адаптирована под продакшн |
+| Screen           | ✅ Phase 6 DONE           | Steps 1–9 ✅ + bug fix `_notify_specialist` + `asked_nodes` dedup + UX (typing, phase transitions, Phase 1 progress "Вопрос N из 6") |
+| Interpreter      | ✅ Phase 5 DONE           | `app/webhooks/interpretator.py`; все Claude-гэпы закрыты: material_check + clarification_loop + clarifications_received |
+| Conceptualizer   | ✅ Мигрирован (Phase 4)   | `app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`; оригинал: `./psycheos-conceptualizer`  |
+| Simulator        | ✅ Мигрирован (Phase 4)   | `app/webhooks/simulator.py` + `app/services/simulator/`; оригинал: `./psycheos-simulator`                   |
 
 ---
 
@@ -380,12 +385,27 @@ No authentication required. Used by Railway for healthchecks.
 
 1. ✅ Interpreter — мигрирован (`app/webhooks/interpretator.py`)
 2. ✅ Conceptualizer — мигрирован (`app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`)
-3. ✅ Simulator — мигрирован (`app/webhooks/simulator.py`)
-4. ✅ Sprint B — Pro Справочник (`app/services/pro/reference_prompt.py`, `reference_chat` FSM)
-5. ✅ **Phase 5 — Artifacts** (`artifacts` table, `save_artifact` service, hooks in 3 bots, `GET /v1/artifacts` API, Pro bot UI)
-6. ✅ **Phase 6 — Worker + Outbox** (`jobs` + `outbox_messages` tables, `app/worker/`, рефакторинг 4 webhook-обработчиков, Procfile `worker:`)
-7. ✅ **Phase 7 — Billing** (`wallets`, `usage_ledger`, `ai_rates` tables; `app/services/billing.py`; Stars reserve/commit/cancel в Pro + worker)
-8. ⬜ Phase 6b — Screen v2 — новый банк вопросов + логика
+3. ✅ Screen v2 — ЗАВЕРШЁН:
+   - ✅ Step 1: DB model `screening_assessment`
+   - ✅ Step 2: `app/services/screen/engine.py` — ScreeningEngine (31 тест, 31 pass)
+   - ✅ Step 3: `weight_matrix.py` (6 экранов, 20 узлов) + `screen_bank.py`
+   - ✅ Step 4: `prompts.py` — 5 Claude промптов + `assemble_prompt()`
+   - ✅ Step 5: `orchestrator.py` — ScreenOrchestrator (3 фазы, Claude routing, stop decision)
+   - ✅ Step 6: `report.py` — generate_full_report / format_report_txt / generate_report_docx
+   - ✅ Step 7: `webhooks/screen.py` — полный FSM-обработчик клиентского бота
+   - ✅ Step 8: `webhooks/pro.py` — screen_menu/create/results коллбэки; кнопка «📊 Скрининг»
+   - ✅ Step 9: `main.py` + `models/__init__.py` — интеграция Screen v2
+4. ✅ Simulator — мигрирован (`app/webhooks/simulator.py` + `app/services/simulator/`)
+5. ✅ Interpreter — Claude-гэпы закрыты (Phase 5):
+   - ✅ Gap 3: `clarifications_received[]` заполняется при ответах в состояниях `intake` и `clarification_loop`
+   - ✅ Gap 1: `_run_material_check()` с `MATERIAL_CHECK_PROMPT`; JSON-ответ `completeness`; роутинг в `clarification_loop` если не "sufficient"
+   - ✅ Gap 2: FSM-состояние `clarification_loop` с `CLARIFICATION_LOOP_PROMPT`; max 2 итерации, затем fallthrough в `_run_interpretation`
+6. ✅ Screen — UX/bug fixes (Phase 6):
+   - ✅ Fix 1: `_notify_specialist` — брать `specialist_user_id` (BigInteger Telegram ID) из `ScreeningAssessment`, не из `Context`
+   - ✅ Fix 2: `asked_nodes` dedup — `node`+`phase` в `response_history`; Phase 2/3 routing исключает уже заданные узлы
+   - ✅ Fix 3: `send_chat_action("typing")` + `⏳ Анализирую...` перед генерацией отчёта
+   - ✅ Fix 4: Сообщения при переходе между фазами (phase1→phase2, phase2→phase3)
+   - ✅ Fix 5: `_show_multi_select(header=...)` — "📋 Вопрос N из 6" в Phase 1
 
 ---
 
@@ -402,33 +422,18 @@ No authentication required. Used by Railway for healthchecks.
 - **Callback pattern в Pro:** `launch_{service_id}_{context_id}` (split по `_` с maxsplit=2, UUID без изменений)
 - **run_id в FSM:** после успешного verify сохраняется в `BotChatState.state_payload["run_id"]`; `context_id` — в `BotChatState.context_id`
 - **subject_id=0:** открытый токен для клиентского Screen — telegram_id клиента неизвестен в момент выдачи; `verify_link` пропускает проверку subject_id если `token.subject_id == 0`
-- **Callback для клиентской ссылки:** `screen_link_{context_id}` (отдельный паттерн от `launch_`, т.к. разные role и subject_id)
+- **Screen v2 callback pattern в Pro:** `screen_menu_{context_id}` → статус + кнопки; `screen_create_{context_id}` → создать ScreeningAssessment + token; `screen_results_{assessment_id}` → отправить txt/json/docx
+- **Screen FSM states:** `idle/None` → `/start {jti}` → verify token + load assessment; `active` → start_screening; `phase1/phase2/phase3` → toggle_{i} + confirm_selection; `completed` → финал
+- **specialist_user_id в ScreeningAssessment:** Telegram ID специалиста (BigInteger), используется для уведомления через Pro-бота при завершении скрининга
 - **Хранение сессии в tool-ботах:** Redis отсутствует; полное состояние сессии (Pydantic-модель) сериализуется в `state_payload["session"]` через `model.model_dump(mode="json")` и восстанавливается через `Model.model_validate(data)`. `bot_chat_state.state` дублирует `session.state.value` для маршрутизации без десериализации
 - **Pydantic v2:** все сервисные модели (`app/services/*/models.py`) используют Pydantic v2 API (`model_dump`, `model_validate`). Совместимость v1-стиля (`class Config`) в оригинальных ботах не переносится
-- **Reference chat history:** хранится в `state_payload["reference_history"]` как список `{"role": "user"|"assistant", "content": str}`. Передаётся в Claude API полностью при каждом запросе (windowed: последние 10 пар). Ошибка API → user-friendly сообщение + логирование; история при ошибке тоже сохраняется
-- **reference_prompt.py:** загружает `app/data/key_psycheos.md` один раз при импорте модуля (`_THEORY_FILE.read_text()`). `REFERENCE_SYSTEM_PROMPT` — строковая константа. Обновление теоретической базы = обновление файла + редеплой
-- **Модель для Справочника:** `claude-haiku-4-5-20251001`, `max_tokens=1024`. Haiku выбран как token-efficient для FAQ-паттерна; при необходимости глубокой аналитики — заменить на Sonnet
-- **Artifacts — idempotency:** `UNIQUE(run_id, service_id)` + `INSERT ... ON CONFLICT DO NOTHING`. `run_id` = `link_token.jti` (UUID). Повторный webhook-вызов → тихое игнорирование дубля. `save_artifact` не бросает исключений — ошибки логируются, обработчик продолжает работу
-- **Artifacts — specialist_telegram_id:** денормализованный BigInteger (Telegram ID). Избегает JOIN с `users` в tool-ботах; Pro bot фильтрует по `context_id`, не по `specialist_telegram_id`
-- **Artifacts — payload structure:** интерпретатор: `{meta, txt_report, structured}`. Концептуализатор: `{layer_a, layer_b, layer_c, meta}`. Симулятор: `{tsi, cci, session_turns, report_text, profile}`. `report_text` в симуляторе сохраняется в обоих путях (.docx и fallback)
-- **Artifacts — Pro UI routing:** `case_artifacts_{context_id}` и `artifact_{artifact_id}` обрабатываются **до** generic `if data.startswith("case_")` — иначе `case_artifacts_` перехватывается generic-обработчиком. Всегда добавлять специфичные `startswith` паттерны выше generic
-- **Artifacts — HTTP API:** `GET /v1/artifacts?context_id=...` → список (без payload, max 20). `GET /v1/artifacts/{artifact_id}` → полный артефакт с payload. Авторизация отсутствует (внутренний API, аналогично `/v1/links/*`)
-- **Worker — без Redis:** очередь заданий на базе PostgreSQL (`jobs` table), `FOR UPDATE SKIP LOCKED` — безопасный параллельный claim без внешних зависимостей
-- **Worker — job lifecycle:** `pending → running → done | failed`. Экспоненциальный backoff при сбое: `30s × 2^(attempts-1)`, max 3 попытки. После исчерпания → `status='failed'`, `last_error` сохраняется
-- **Worker — outbox:** отправка Telegram-сообщений через `outbox_messages` table. Поле `seq` гарантирует порядок нескольких сообщений одного job. Бинарные файлы (.docx, .txt, .json) хранятся в JSONB как base64 (`document_b64` ключ), декодируются в `_send()` перед отправкой
-- **Worker — InlineKeyboardMarkup:** сериализуется в JSONB как `{"inline_keyboard": [[{"text": ..., "callback_data": ...}]]}`, десериализуется через `InlineKeyboardMarkup.de_json(data, bot)` в `dispatch_one()`
-- **Worker — claim/execute разделены:** `claim_next()` коммитит переход в `running` отдельной транзакцией; handler запускается в новой сессии. При сбое handler — `mark_failed()` открывает ещё одну сессию. Rollback handler'а не откатывает claim
-- **Worker — sim active turn синхронный:** `_handle_specialist_message` в `simulator.py` вызывает Claude напрямую (осознанный trade-off). Причина: высокая частота реплик, специалист ожидает мгновенного ответа
-- **Worker — pro_reference:** webhook сохраняет user-turn в history, затем enqueue. Worker делает Claude-вызов, апдейтит историю (trim до 10 пар), сохраняет state, отправляет ответ через outbox
-- **Worker — chained jobs:** `interp_intake` при принятии материала enqueue-ит `interp_run`. `concept_hypothesis` при `should_continue=False` enqueue-ит `concept_output`. Цепочки формируются внутри worker-обработчиков, не в webhook
-- **Worker — job payload:** всегда содержит `state_payload` (dict из `bot_chat_state`) и `role`. Доп. поля: `image_b64`/`image_media_type` (interp_photo), `run_mode` (interp_run retry), `session` (conceptualizer/simulator), `message_text` (concept_hypothesis), `case_key`/`goal`/`mode`/`crisis` (sim_launch), `custom_data`/`crisis_value` (sim_launch_custom)
-- **Worker — Procfile:** `worker: python -m app.worker`. На Railway — отдельный process type. Один воркер достаточен для ≤30 пользователей. Масштабировать горизонтально при росте нагрузки (FOR UPDATE SKIP LOCKED безопасен для N воркеров)
-- **Billing — две фазы:** reserve при запуске инструмента (reserved_stars += N), commit при успехе terminal-job (balance -= N, reserved -= N, lifetime_out += N), cancel при permanent failure (reserved -= N). `available = balance_stars − reserved_stars`. Источник правды — колонки `wallets`, не сумма ledger
-- **Billing — run_id как ключ:** резервирование привязывается к `link_token.jti` (UUID). Worker ищет `usage_ledger WHERE kind='reserve' AND run_id=run_id` для commit/cancel. Не требует изменений в link_token или job payload
-- **Billing — idempotency:** `commit_by_run_id` / `cancel_by_run_id` сначала проверяют наличие `kind IN ('charge','refund')` для run_id — повторный вызов → return False без изменений
-- **Billing — TERMINAL_JOB_TYPES:** `{interp_run, concept_output, sim_launch, sim_launch_custom}` — только эти типы триггерят commit/cancel. Промежуточные (interp_photo, interp_intake, concept_hypothesis) — нет
-- **Billing — ai_rates seed:** interpretator/session=20⭐, conceptualizator/session=12⭐, simulator/session=15⭐, simulator/active_turn=3⭐, pro/reference=1⭐. Цены pre-calculated по формуле `ceil((in × in_$/tok + out × out_$/tok + total × 2/1M) × 1.2 / 0.01)`. Обновление цены = UPDATE ai_rates (без кода)
-- **Billing — invoice при нехватке Stars:** `handle_launch_tool()` вызывает `bot.send_invoice(currency="XTR")`. Сумма = max(10, ceil(shortfall/10)×10). payload=`"topup:{user_id}"`. pre_checkout_query → auto-approve. successful_payment → `credit_stars(kind="topup")`
-- **Billing — admin credit:** FSM state `waiting_admin_credit`. Формат ввода `telegram_id:stars`. `credit_stars(kind="admin_credit")` без проверки лимита. Доступно только из `settings.admin_ids`
-- **Billing — без бесплатных fallback:** если запись в `ai_rates` отсутствует (`get_stars_price → None`) — инструмент запускается бесплатно (backward-compat). Это осознанное решение, не ошибка
-- **extract_chat_id / pre_checkout_query:** `from_user.id` используется как `chat_id` для pre_checkout_query (в приватных чатах chat_id == user_id). Дедупликация по update_id работает корректно
+- **Simulator FSM states:** `setup` (setup_step: mode→case→goal / upload→crisis→goal_practice) → `active` (реплики специалиста → Claude) → `complete`; сессия в `state_payload["session"]` (SessionData), профиль в `state_payload["profile"]` (SpecialistProfile, накопительно)
+- **Simulator report:** `generate_report_docx()` возвращает `io.BytesIO` (не путь к файлу); отправляется через `InputFile(buf, filename=...)` как `.docx`
+- **Simulator PRACTICE mode:** `custom_prompt` (system prompt + данные специалиста) хранится в `state_payload["custom_prompt"]`; при каждом запросе к Claude берётся оттуда
+- **screening_assessment и Alembic:** таблица `screening_assessment` не имеет Alembic-миграции — создаётся через `Base.metadata.create_all` при старте. Миграции Alembic: существует только `0001_create_link_tokens.py`. Следующая генерация: `alembic revision --autogenerate -m "add screening_assessment"` → `0002_...`
+- **Claude model (Phase 4):** все tool-боты (Simulator, Conceptualizer, Interpreter, Screen report) используют `claude-sonnet-4-5-20250929` через `AsyncAnthropic` напрямую (не через обёртку). Модель задаётся константой `_ANTHROPIC_MODEL` в каждом модуле.
+- **Interpreter FSM states (Phase 5):** `active` → specialist types → `_run_intake` (может перейти в `intake` если Claude задал уточняющий вопрос) → `_run_material_check` (completeness: "sufficient" | "partial" | "fragmentary") → если sufficient: `_run_interpretation` → `completed`; иначе → `clarification_loop` (max `_MAX_CLARIFICATION_ITERATIONS = 2` итерации, затем принудительный fallthrough в interpretation). `clarifications_received[]` в payload накапливает ответы специалиста в обоих состояниях `intake` и `clarification_loop`.
+- **Interpreter `_run_material_check` JSON parsing:** Claude получает инструкцию вернуть `{"completeness": "sufficient|partial|fragmentary", "message": "..."}` — парсинг через `_parse_completeness()` с JSON-first, keyword-fallback (fragmentary / partial / default sufficient) подходом.
+- **Screen `asked_nodes` deduplication (Phase 6):** каждый entry в `response_history` дополнен полями `node` (str) и `phase` (int). ScreeningEngine игнорирует лишние ключи (читает только `axis_weights`/`layer_weights` через `.get()`). `_asked_nodes(state)` извлекает set узлов из response_history где phase in (2, 3). `_fallback_node(state, exclude)` итерирует сначала ambiguity_zones, затем all_nodes, пропуская exclude; при исчерпании — wrap к первому узлу. Phase 2/3 routing принимает Claude-предложение только если оно не в exclude.
+- **Screen `_show_multi_select` header (Phase 6):** опциональный параметр `header: str | None = None`; если задан — prepend к тексту вопроса как `"{header}\n\n{question}"`. В Phase 1 оба call-site передают `f"📋 Вопрос {screen_index + 1} из 6"`. Phase 2/3 передают `None` (переменная длина фаз).
+- **Screen `_notify_specialist` fix (Phase 6):** функция принимает `assessment_id_str` + `context_id`; загружает `ScreeningAssessment` по UUID, берёт `assessment.specialist_user_id` (BigInteger Telegram ID) для `chat_id` в Pro-боте. `Context` загружается отдельно только для получения `client_ref` (label). `Context.specialist_user_id` — UUID FK, НЕ Telegram ID.
