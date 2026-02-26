@@ -152,6 +152,7 @@ _SERVICE_LABEL = {
     "interpretator": "🧠 Интерпретация",
     "conceptualizator": "💡 Концептуализация",
     "simulator": "🎭 Симуляция",
+    "screen": "📊 Скрининг",
 }
 
 

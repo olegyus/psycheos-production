@@ -14,10 +14,12 @@ import logging
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 
 from app.config import settings
+from app.models.artifact import Artifact
 from app.models.bot_chat_state import BotChatState
 from app.models.context import Context
 from app.models.screening_assessment import ScreeningAssessment
@@ -420,10 +422,46 @@ async def _handle_completion(
         parse_mode="Markdown",
     )
 
-    # Notify specialist via Pro bot
+    # Persist artifact so Pro bot "История результатов" shows this screening
     assessment_id_str = payload.get("assessment_id")
+    if assessment_id_str and state and state.context_id and result.get("report"):
+        await _save_screen_artifact(db, assessment_id_str, state.context_id, result["report"])
+
+    # Notify specialist via Pro bot
     if assessment_id_str:
         await _notify_specialist(db, assessment_id_str, state.context_id if state else None)
+
+
+async def _save_screen_artifact(
+    db: AsyncSession, assessment_id_str: str, context_id, report: dict
+) -> None:
+    """Insert a completed screening artifact; idempotent via UNIQUE(run_id, service_id)."""
+    try:
+        res = await db.execute(
+            select(ScreeningAssessment).where(ScreeningAssessment.id == UUID(assessment_id_str))
+        )
+        assessment = res.scalar_one_or_none()
+        if not assessment:
+            logger.warning("[screen] _save_screen_artifact: assessment %s not found", assessment_id_str)
+            return
+
+        run_id = assessment.link_token_jti or assessment.id
+        report_text: str = report.get("report_text") or ""
+        summary = report_text[:200].strip() or None
+
+        stmt = pg_insert(Artifact).values(
+            context_id=context_id,
+            service_id="screen",
+            run_id=run_id,
+            specialist_telegram_id=assessment.specialist_user_id,
+            payload=report,
+            summary=summary,
+        ).on_conflict_do_nothing(constraint="uq_artifacts_run_service")
+        await db.execute(stmt)
+        await db.flush()
+        logger.info("[screen] artifact saved for assessment %s", assessment_id_str)
+    except Exception:
+        logger.warning("[screen] failed to save artifact for %s", assessment_id_str, exc_info=True)
 
 
 async def _notify_specialist(
