@@ -15,7 +15,6 @@ engine = create_async_engine(
     echo=settings.DEBUG,
     connect_args={
         "statement_cache_size": 0,
-        "prepared_statement_cache_size": 0,
     },
 )
 

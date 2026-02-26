@@ -42,7 +42,11 @@ def do_run_migrations(connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    engine = create_async_engine(get_url(), poolclass=pool.NullPool)
+    engine = create_async_engine(
+        get_url(),
+        poolclass=pool.NullPool,
+        connect_args={"statement_cache_size": 0},
+    )
     async with engine.begin() as conn:
         await conn.run_sync(do_run_migrations)
     await engine.dispose()
