@@ -186,6 +186,14 @@ class ScreenOrchestrator:
         exit_by_count = new_q_count >= _MAX_PHASE2_QUESTIONS
         exit_by_stop = stop and new_q_count >= _MIN_PHASE2_QUESTIONS
 
+        logger.info(
+            "[phase2] q=%d, max=%d, min=%d, conf=%.3f, stop=%s, "
+            "exit_conf=%s, exit_count=%s, exit_stop=%s",
+            new_q_count, _MAX_PHASE2_QUESTIONS, _MIN_PHASE2_QUESTIONS,
+            state.get("confidence", 0.0), stop,
+            exit_by_confidence, exit_by_count, exit_by_stop,
+        )
+
         if exit_by_confidence or exit_by_count or exit_by_stop:
             if exit_by_confidence:
                 report = await self._generate_report(assessment_id)
