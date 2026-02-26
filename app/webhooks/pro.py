@@ -1068,12 +1068,11 @@ async def show_artifact_detail(
             caption="📊 Скрининг — структурированные данные (JSON)",
         )
 
-        report_text: str = a.payload.get("report_text") or json.dumps(report_json, ensure_ascii=False, indent=2)
-        txt_bytes = report_text.encode("utf-8")
+        docx_bytes = await generate_report_docx(report_json)
         await bot.send_document(
             chat_id=chat_id,
-            document=InputFile(io.BytesIO(txt_bytes), filename=f"screen_{ctx_prefix}_{date_prefix}.txt"),
-            caption="📋 Скрининг — отчёт для специалиста (TXT)",
+            document=InputFile(io.BytesIO(docx_bytes), filename=f"screen_{ctx_prefix}_{date_prefix}.docx"),
+            caption="📋 Скрининг — структурный профиль (DOCX)",
         )
         return
 
