@@ -434,6 +434,7 @@ async def handle_callback(
 
     if data.startswith("launch_"):
         _, service_id, context_id_str = data.split("_", 2)
+        logger.info(f"[pro] callback launch_ matched: data={data}")
         await handle_launch_tool(query, bot, db, chat_id, user_id, service_id, context_id_str)
         return
 
@@ -807,6 +808,7 @@ async def handle_launch_tool(query, bot, db, chat_id, user_id, service_id, conte
     Issue a link token and send the deep link to the specialist.
     Phase 7: checks Stars balance; sends an invoice if insufficient.
     """
+    logger.info(f"[pro] handle_launch_tool called: service={service_id} context={context_id_str} user={user_id}")
     if service_id not in _TOOL_LABELS:
         await query.answer("Неизвестный инструмент.", show_alert=True)
         return
