@@ -783,6 +783,14 @@ async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
         role="client",
         subject_id=0,
     )
+    assessment = ScreeningAssessment(
+        context_id=context_id,
+        specialist_user_id=user_id,
+        link_token_jti=token.jti,
+        status="created",
+    )
+    db.add(assessment)
+    await db.flush()
     deep_link = f"https://t.me/{username}?start={token.jti}"
     await query.edit_message_text(
         text=(
