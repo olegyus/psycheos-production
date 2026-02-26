@@ -343,6 +343,14 @@ async def _show_multi_select(
         question = f"{header}\n\n{question}"
     options = screen.get("options", [])
 
+    if not options:
+        logger.error("[screen] _show_multi_select: empty options, screen=%r", screen)
+        await bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ Не удалось загрузить вопрос. Пожалуйста, сообщите специалисту.",
+        )
+        return
+
     buttons = []
     for i, opt in enumerate(options):
         mark = "✅" if i in selected else "⬜"
