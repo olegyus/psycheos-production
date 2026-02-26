@@ -782,7 +782,7 @@ async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
         await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
         return
 
-result = await db.execute(select(Context).where(Context.context_id == context_id))
+    result = await db.execute(select(Context).where(Context.context_id == context_id))
     ctx = result.scalar_one_or_none()
     if not ctx:
         await query.answer("Кейс не найден.", show_alert=True)
