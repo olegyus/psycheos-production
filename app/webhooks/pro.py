@@ -704,51 +704,24 @@ _TOOL_LABELS = {
 }
 
 
+async def handle_screen_menu(query, bot, db, chat_id, context_id_str):
+    """Screen v2 — not yet implemented."""
+    await query.answer("Скрининг в разработке.", show_alert=True)
+
+
+async def handle_screen_create(query, bot, db, chat_id, user_id, context_id_str):
+    """Screen v2 — not yet implemented."""
+    await query.answer("Скрининг в разработке.", show_alert=True)
+
+
 async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
-    """Issue an open client token for Screen and send the link to the specialist."""
-    username = settings.tool_bot_usernames.get("screen", "")
-    if not username:
-        await query.answer("Screen не настроен. Обратитесь к администратору.", show_alert=True)
-        return
+    """Screen v2 — not yet implemented."""
+    await query.answer("Скрининг в разработке.", show_alert=True)
 
-    try:
-        context_id = uuid.UUID(context_id_str)
-    except ValueError:
-        await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
-        return
 
-    result = await db.execute(select(Context).where(Context.context_id == context_id))
-    ctx = result.scalar_one_or_none()
-    if not ctx:
-        await query.answer("Кейс не найден.", show_alert=True)
-        return
-    user = await get_user_by_tg(db, user_id)
-    if not user or ctx.specialist_user_id != user.user_id:
-        await query.answer("Нет доступа к этому кейсу.", show_alert=True)
-        return
-
-    # subject_id=0 — open token: client's Telegram ID is unknown at issue time
-    token = await issue_link(
-        db,
-        service_id="screen",
-        context_id=context_id,
-        role="client",
-        subject_id=0,
-    )
-
-    deep_link = f"https://t.me/{username}?start={token.jti}"
-
-    await bot.send_message(
-        chat_id=chat_id,
-        text=f"📤 *Ссылка для клиента (Screen)*\n\n"
-             f"Отправьте клиенту эту ссылку:\n`{deep_link}`\n\n"
-             f"_Пропуск действует 24 часа._",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("▶️ Открыть Screen", url=deep_link)],
-        ]),
-        parse_mode="Markdown",
-    )
-    await query.answer()
+async def handle_screen_results(query, bot, db, chat_id, assessment_id_str):
+    """Screen v2 — not yet implemented."""
+    await query.answer("Скрининг в разработке.", show_alert=True)
 
 
 async def handle_launch_tool(query, bot, db, chat_id, user_id, service_id, context_id_str):
