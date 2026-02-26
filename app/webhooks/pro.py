@@ -102,6 +102,7 @@ def main_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📋 Мои кейсы", callback_data="cases_list")],
         [InlineKeyboardButton("➕ Новый кейс", callback_data="case_new")],
         [InlineKeyboardButton("📚 Справочник", callback_data="open_reference")],
+        [InlineKeyboardButton("💰 Баланс", callback_data="show_balance")],
     ])
 
 
@@ -452,6 +453,27 @@ async def handle_callback(
         context_id_str = data[len("screen_link_"):]
         await handle_screen_link(query, bot, db, chat_id, user_id, context_id_str)
         return
+    if data == "show_balance":
+        user = await get_user_by_tg(db, user_id)
+        if not user:
+            await query.answer("Нет доступа.", show_alert=True)
+            return
+        wallet = await get_or_create_wallet(db, user.user_id, user_id)
+        await query.edit_message_text(
+            text=(
+                f"💰 *Баланс*\n\n"
+                f"Доступно: {wallet.balance_stars} ⭐\n"
+                f"Зарезервировано: {wallet.reserved_stars} ⭐\n\n"
+                f"_Пополнение происходит автоматически при запуске инструмента, "
+                f"если средств недостаточно._"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Главное меню", callback_data="main_menu")],
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
     # ── Reference chat ──
     if data == "open_reference":
         user = await get_user_by_tg(db, user_id)
@@ -724,11 +746,13 @@ _TOOL_LABELS = {
 async def handle_screen_menu(query, bot, db, chat_id, context_id_str):
     """Screen v2 — not yet implemented."""
     await query.answer("Скрининг в разработке.", show_alert=True)
+    return
 
 
 async def handle_screen_create(query, bot, db, chat_id, user_id, context_id_str):
     """Screen v2 — not yet implemented."""
     await query.answer("Скрининг в разработке.", show_alert=True)
+    return
 
 
 async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
@@ -775,32 +799,7 @@ async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
 async def handle_screen_results(query, bot, db, chat_id, assessment_id_str):
     """Screen v2 — not yet implemented."""
     await query.answer("Скрининг в разработке.", show_alert=True)
-
-    # Plain-text preview (≤4000 chars to stay within Telegram limit)
-    preview = report_text[:4000]
-    await bot.send_message(
-        chat_id=chat_id,
-        text=f"```\n{preview}\n```",
-        parse_mode="Markdown",
-    )
-
-    # JSON file
-    json_bytes = json.dumps(report_json, ensure_ascii=False, indent=2).encode("utf-8")
-    await bot.send_document(
-        chat_id=chat_id,
-        document=io.BytesIO(json_bytes),
-        filename="screening_report.json",
-        caption="Отчёт в формате JSON",
-    )
-
-    # DOCX file
-    docx_bytes = await generate_report_docx(report_json)
-    await bot.send_document(
-        chat_id=chat_id,
-        document=io.BytesIO(docx_bytes),
-        filename="screening_report.docx",
-        caption="Отчёт в формате DOCX",
-    )
+    return
 
 
 async def handle_launch_tool(query, bot, db, chat_id, user_id, service_id, context_id_str):
