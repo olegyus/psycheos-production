@@ -11,6 +11,7 @@ from fastapi import FastAPI
 
 from app.config import settings
 from app.database import engine, Base
+import app.models  # noqa: F401 — registers all ORM models in Base.metadata (needed for create_all)
 from app.webhooks.router_factory import create_webhook_router
 from app.webhooks.pro import handle_pro
 from app.webhooks.interpretator import handle_interpretator
@@ -18,6 +19,7 @@ from app.webhooks.conceptualizator import handle_conceptualizator
 from app.webhooks.simulator import handle_simulator
 from app.webhooks.stubs import handle_screen
 from app.routers.links import router as links_router
+from app.routers.artifacts import router as artifacts_router
 
 # --- Logging ---
 logging.basicConfig(
@@ -60,6 +62,9 @@ async def health():
 
 # --- Links API ---
 app.include_router(links_router)
+
+# --- Artifacts API ---
+app.include_router(artifacts_router)
 
 
 # --- Webhook routers ---

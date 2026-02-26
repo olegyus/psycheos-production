@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     # --- Database ---
     # In production (Railway), use pooler URL for connection pooling
     DATABASE_URL_POOLER: str
-    # Direct URL — only for migrations (Alembic)
-    DATABASE_URL: str
+    # Direct URL — only for migrations (Alembic), port 5432, bypasses PgBouncer
+    DATABASE_URL_DIRECT: str
 
     # Connection pool limits per process (keep low — multiple replicas share DB)
     DB_POOL_SIZE: int = 5

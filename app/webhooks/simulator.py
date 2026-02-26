@@ -18,31 +18,24 @@ state_payload keys:
   profile         — SpecialistProfile.model_dump(mode="json") | null
 """
 
-import io
 import logging
-import re
-from datetime import datetime
-from typing import Optional
 
 from anthropic import AsyncAnthropic
 from sqlalchemy.ext.asyncio import AsyncSession
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 
 from app.config import settings
 from app.models.bot_chat_state import BotChatState
+from app.services.job_queue import enqueue
 from app.services.links import LinkVerifyError, verify_link
 from app.services.simulator.cases import BUILTIN_CASES
 from app.services.simulator.formatter import (
-    _escape_html, build_iteration_log, format_for_telegram, format_intro,
+    _escape_html, build_iteration_log, format_for_telegram,
     parse_claude_response,
 )
 from app.services.simulator.goals import GOAL_LABELS, MODE_LABELS
-from app.services.simulator.report_generator import generate_report_docx
 from app.services.simulator.schemas import (
-    BuiltinCase, CaseDynamics, ContinuumScore, CrisisFlag,
-    ClientInfo, Conceptualization, LayerA, LayerB, LayerDescription, Layers,
-    ScreenProfile, SessionData, SessionGoal, SessionMode, SpecialistProfile,
-    SystemCost, Target, TSIComponents, CCIComponents,
+    CrisisFlag, SessionData, SessionGoal, SessionMode,
 )
 from app.services.simulator.system_prompt import build_system_prompt
 from app.webhooks.common import upsert_chat_state
@@ -435,82 +428,26 @@ async def _on_goal_selected_practice(
 async def _launch_session(
     msg, bot: Bot, db: AsyncSession, state: BotChatState,
     chat_id: int, user_id: int | None,
-    case: BuiltinCase, goal: SessionGoal, mode: SessionMode, payload: dict,
+    case, goal: SessionGoal, mode: SessionMode, payload: dict,
 ) -> None:
+    """Enqueue sim_launch job; worker initialises session and sends first reply."""
+    case_key_map = {v.case_id: k for k, v in BUILTIN_CASES.items()}
+    case_key = case_key_map.get(case.case_id, "1")
+
     await msg.edit_text("⏳ Инициализация симуляции...")
-
-    system_prompt = build_system_prompt(case, goal, mode)
-    session_data = SessionData(
-        user_id=user_id or 0,
-        case_id=case.case_id,
-        case_name=case.case_name,
-        mode=mode,
-        session_goal=goal,
-        crisis_flag=case.crisis_flag,
+    await enqueue(
+        db, "sim_launch", BOT_ID, chat_id,
+        payload={
+            "case_key": case_key,
+            "goal": goal.value,
+            "mode": mode.value,
+            "crisis": case.crisis_flag.value,
+            "state_payload": payload,
+            "role": state.role or "specialist",
+        },
+        user_id=user_id, context_id=state.context_id, run_id=payload.get("run_id"),
+        priority=3,
     )
-
-    first_user_msg = (
-        "Сессия начинается. Клиент входит в кабинет. "
-        "Сгенерируй первую реплику клиента и начальный блок супервизора."
-    )
-    session_data.messages.append({"role": "user", "content": first_user_msg})
-
-    try:
-        client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        resp = await client.messages.create(
-            model=_ANTHROPIC_MODEL,
-            max_tokens=2048,
-            system=system_prompt,
-            messages=session_data.messages,
-        )
-        claude_response = resp.content[0].text
-    except Exception as e:
-        logger.exception("[simulator] Claude error during session launch")
-        await msg.edit_text(
-            f"❌ Ошибка Claude API:\n<code>{_escape_html(str(e))}</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    session_data.messages.append({"role": "assistant", "content": claude_response})
-
-    parsed = parse_claude_response(claude_response)
-    if parsed.signal:
-        session_data.signal_log.append(parsed.signal)
-    if parsed.fsm_state:
-        session_data.fsm_log.append(parsed.fsm_state)
-    iteration = build_iteration_log(parsed=parsed, replica_id=1, specialist_input=first_user_msg)
-    session_data.iteration_log.append(iteration)
-
-    goal_label = GOAL_LABELS.get(goal, goal.value)
-    mode_label = MODE_LABELS.get(mode.value, mode.value)
-    client_info = f"{case.client.gender}, {case.client.age} лет"
-
-    formatted = format_intro(
-        case_name=case.case_name,
-        client_info=client_info,
-        crisis=case.crisis_flag.value,
-        goal=goal_label,
-        mode=mode_label,
-        first_reply=claude_response,
-        cci=case.cci.cci,
-    )
-
-    new_payload = {
-        **payload,
-        "session": session_data.model_dump(mode="json"),
-        "setup_step": None,
-    }
-    await upsert_chat_state(
-        db, bot_id=BOT_ID, chat_id=chat_id, state="active",
-        state_payload=new_payload, user_id=user_id,
-        context_id=state.context_id,
-    )
-
-    chunks = _split_text(formatted)
-    await msg.edit_text(chunks[0], parse_mode="HTML")
-    for chunk in chunks[1:]:
-        await bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
 
 
 async def _launch_session_custom(
@@ -519,144 +456,21 @@ async def _launch_session_custom(
     custom_data: str, goal: SessionGoal, mode: SessionMode,
     crisis_value: str, payload: dict,
 ) -> None:
+    """Enqueue sim_launch_custom job; worker builds prompt and starts the session."""
     await msg.edit_text("⏳ Инициализация симуляции с вашими данными...")
-
-    crisis = CrisisFlag(crisis_value)
-    baseline_L0 = {"NONE": 35, "MODERATE": 55, "HIGH": 78}.get(crisis_value, 35)
-
-    placeholder_case = BuiltinCase(
-        case_id="CUSTOM",
-        case_name="Пользовательский кейс",
-        difficulty="CUSTOM",
-        client=ClientInfo(
-            id="CUSTOM", gender="не указан", age=0,
-            presenting_complaints=["См. загруженные данные"],
-        ),
-        screen_profile=ScreenProfile(
-            economy_exploration=ContinuumScore(value=50),
-            protection_contact=ContinuumScore(value=50),
-            retention_movement=ContinuumScore(value=50),
-            survival_development=ContinuumScore(value=50),
-        ),
-        layers=Layers(
-            L0=LayerDescription(description="См. загруженные данные"),
-            L1=LayerDescription(description="См. загруженные данные"),
-            L2=LayerDescription(description="См. загруженные данные"),
-            L3=LayerDescription(description="См. загруженные данные"),
-            L4=LayerDescription(description="См. загруженные данные"),
-        ),
-        conceptualization=Conceptualization(
-            layer_a=LayerA(
-                leading_hypothesis="См. загруженные данные",
-                dominant_layer="L0",
-                configuration="См. загруженные данные",
-                system_cost=SystemCost(),
-            ),
-            layer_b=LayerB(targets=[], sequence="См. загруженные данные"),
-        ),
-        dynamics=CaseDynamics(
-            baseline_tension_L0=baseline_L0,
-            baseline_cognitive_access=max(20, 100 - int(baseline_L0 * 0.8)),
-            baseline_uncertainty=65,
-            baseline_trust=25,
-            L0_reactivity="moderate",
-            L2_strength="moderate",
-            L3_accessibility="moderate",
-            interpretation_tolerance="moderate",
-            uncertainty_tolerance="moderate",
-            cognitive_window="moderate",
-            escalation_speed="moderate",
-            intervention_range="moderate",
-            recovery_rate=0.5,
-            volatility=0.4,
-        ),
-        crisis_flag=crisis,
+    await enqueue(
+        db, "sim_launch_custom", BOT_ID, chat_id,
+        payload={
+            "custom_data": custom_data,
+            "goal": goal.value,
+            "mode": mode.value,
+            "crisis_value": crisis_value,
+            "state_payload": payload,
+            "role": state.role or "specialist",
+        },
+        user_id=user_id, context_id=state.context_id, run_id=payload.get("run_id"),
+        priority=3,
     )
-
-    system_prompt = build_system_prompt(placeholder_case, goal, mode)
-    custom_block = (
-        "\n\n═══════════════════════════════════════════\n"
-        "ДАННЫЕ КЛИЕНТА (загружены специалистом):\n"
-        "═══════════════════════════════════════════\n"
-        f"{custom_data}\n"
-        "═══════════════════════════════════════════\n"
-        "Используй ЭТИ данные как основу для симуляции. "
-        "Извлеки из них Screen-профиль, L0–L4, Layer A/B/C и все остальные параметры. "
-        "Если данные неполные — заполни пробелы логически на основе имеющегося.\n"
-    )
-    full_system_prompt = system_prompt + custom_block
-
-    session_data = SessionData(
-        user_id=user_id or 0,
-        case_id="CUSTOM",
-        case_name="Пользовательский кейс",
-        mode=mode,
-        session_goal=goal,
-        crisis_flag=crisis,
-    )
-
-    first_user_msg = (
-        "Сессия начинается. Клиент входит в кабинет. "
-        "Сгенерируй первую реплику клиента и начальный блок супервизора."
-    )
-    session_data.messages.append({"role": "user", "content": first_user_msg})
-
-    try:
-        claude_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        resp = await claude_client.messages.create(
-            model=_ANTHROPIC_MODEL,
-            max_tokens=2048,
-            system=full_system_prompt,
-            messages=session_data.messages,
-        )
-        claude_response = resp.content[0].text
-    except Exception as e:
-        logger.exception("[simulator] Claude error during custom session launch")
-        await msg.edit_text(
-            f"❌ Ошибка Claude API:\n<code>{_escape_html(str(e))}</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    session_data.messages.append({"role": "assistant", "content": claude_response})
-
-    parsed = parse_claude_response(claude_response)
-    if parsed.signal:
-        session_data.signal_log.append(parsed.signal)
-    if parsed.fsm_state:
-        session_data.fsm_log.append(parsed.fsm_state)
-    iteration = build_iteration_log(parsed=parsed, replica_id=1, specialist_input=first_user_msg)
-    session_data.iteration_log.append(iteration)
-
-    goal_label = GOAL_LABELS.get(goal, goal.value)
-    mode_label = MODE_LABELS.get(mode.value, mode.value)
-
-    formatted = format_intro(
-        case_name="Пользовательский кейс",
-        client_info="по загруженным данным",
-        crisis=crisis_value,
-        goal=goal_label,
-        mode=mode_label,
-        first_reply=claude_response,
-        cci=placeholder_case.cci.cci,
-    )
-
-    new_payload = {
-        **payload,
-        "custom_prompt": full_system_prompt,
-        "session": session_data.model_dump(mode="json"),
-        "setup_step": None,
-    }
-    await upsert_chat_state(
-        db, bot_id=BOT_ID, chat_id=chat_id, state="active",
-        state_payload=new_payload, user_id=user_id,
-        context_id=state.context_id,
-    )
-
-    chunks = _split_text(formatted)
-    await msg.edit_text(chunks[0], parse_mode="HTML")
-    for chunk in chunks[1:]:
-        await bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
 
 
 # ── Active session ─────────────────────────────────────────────────────────────
@@ -759,98 +573,21 @@ async def _on_end_confirm(
     msg, bot: Bot, db: AsyncSession, state: BotChatState,
     chat_id: int, user_id: int | None, payload: dict,
 ) -> None:
+    """Enqueue sim_report job; worker generates docx, saves artifact, updates FSM."""
     if "session" not in payload:
         await msg.edit_text("❌ Данные сессии не найдены.")
         return
 
-    session_data = SessionData.model_validate(payload["session"])
     await msg.edit_text("⏳ Формирование аналитического отчёта...")
-
-    system_prompt = _get_system_prompt(payload, session_data)
-    session_data.messages.append({"role": "user", "content": "/end"})
-
-    try:
-        claude_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        resp = await claude_client.messages.create(
-            model=_ANTHROPIC_MODEL,
-            max_tokens=4096,
-            system=system_prompt,
-            messages=session_data.messages,
-        )
-        report_text = resp.content[0].text
-    except Exception as e:
-        logger.exception("[simulator] Claude error generating report")
-        await msg.edit_text(
-            f"❌ Ошибка:\n<code>{_escape_html(str(e))}</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    tsi = _parse_tsi_from_report(report_text)
-    session_data.tsi = tsi
-    cci = _get_cci(session_data.case_id)
-
-    specialist_profile = _update_profile(payload, user_id, session_data, tsi)
-
-    goal_label = GOAL_LABELS.get(session_data.session_goal, session_data.session_goal.value)
-    mode_label = MODE_LABELS.get(session_data.mode.value, session_data.mode.value)
-
-    try:
-        docx_buf = generate_report_docx(
-            report_text=report_text,
-            case_name=session_data.case_name,
-            case_id=session_data.case_id,
-            session_goal=goal_label,
-            mode=mode_label,
-            crisis_flag=session_data.crisis_flag.value,
-            signal_log=session_data.signal_log,
-            fsm_log=session_data.fsm_log,
-            iteration_log=session_data.iteration_log,
-            tsi=tsi,
-            cci=cci,
-            specialist_profile=specialist_profile,
-        )
-    except Exception as e:
-        logger.error("[simulator] Report generation failed: %s", e)
-        await _send_text_fallback(bot, chat_id, report_text, tsi)
-        final_payload = {"profile": specialist_profile.model_dump(mode="json") if specialist_profile else {}}
-        await upsert_chat_state(
-            db, bot_id=BOT_ID, chat_id=chat_id, state="complete",
-            state_payload=final_payload, user_id=user_id,
-            context_id=state.context_id,
-        )
-        return
-
-    exchanges = len(session_data.iteration_log)
-    greens = session_data.signal_log.count("🟢")
-    yellows = session_data.signal_log.count("🟡")
-    reds = session_data.signal_log.count("🔴")
-    tsi_text = f"TSI: {tsi.tsi:.2f} ({tsi.interpretation})" if tsi else "TSI: н/д"
-    cci_text = f"CCI: {cci.cci:.2f}" if cci else ""
-
-    caption = (
-        f"📋 <b>Аналитический отчёт v1.1</b>\n\n"
-        f"Кейс: {_escape_html(session_data.case_name)}\n"
-        f"Реплик: {exchanges} | 🟢{greens} 🟡{yellows} 🔴{reds}\n"
-        f"📊 {tsi_text}"
-    )
-    if cci_text:
-        caption += f" | {cci_text}"
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"PsycheOS_Report_{session_data.case_id}_{timestamp}.docx"
-    doc_file = InputFile(docx_buf, filename=filename)
-    await bot.send_document(chat_id=chat_id, document=doc_file, caption=caption, parse_mode="HTML")
-    await bot.send_message(
-        chat_id=chat_id,
-        text="✅ Сессия завершена. Используйте /start для новой симуляции.",
-    )
-
-    final_payload = {"profile": specialist_profile.model_dump(mode="json") if specialist_profile else {}}
-    await upsert_chat_state(
-        db, bot_id=BOT_ID, chat_id=chat_id, state="complete",
-        state_payload=final_payload, user_id=user_id,
-        context_id=state.context_id,
+    await enqueue(
+        db, "sim_report", BOT_ID, chat_id,
+        payload={
+            "session": payload["session"],
+            "state_payload": payload,
+            "role": state.role or "specialist",
+        },
+        user_id=user_id, context_id=state.context_id, run_id=payload.get("run_id"),
+        priority=3,
     )
 
 
@@ -949,109 +686,3 @@ def _get_system_prompt(payload: dict, session_data: SessionData) -> str:
     return build_system_prompt(case, session_data.session_goal, session_data.mode)
 
 
-def _parse_tsi_from_report(report_text: str) -> Optional[TSIComponents]:
-    try:
-        def _extract(pattern: str, text: str) -> float:
-            m = re.search(pattern, text)
-            return float(m.group(1)) if m else 0.0
-
-        r_match = _extract(r'R_match:\s*([\d.]+)', report_text)
-        l_cons = _extract(r'L_consistency:\s*([\d.]+)', report_text)
-        alliance = _extract(r'Alliance_score:\s*([\d.]+)', report_text)
-        unc_mod = _extract(r'Uncertainty_modulation:\s*([\d.]+)', report_text)
-        reactivity = _extract(r'Therapist_reactivity:\s*([\d.]+)', report_text)
-
-        if sum(1 for v in [r_match, l_cons, alliance, unc_mod, reactivity] if v > 0) < 3:
-            logger.warning("[simulator] TSI parsing: fewer than 3 components found")
-            return None
-
-        return TSIComponents(
-            R_match=min(1.0, r_match),
-            L_consistency=min(1.0, l_cons),
-            Alliance_score=min(1.0, alliance),
-            Uncertainty_modulation=min(1.0, unc_mod),
-            Therapist_reactivity=min(1.0, reactivity),
-        )
-    except Exception as e:
-        logger.error("[simulator] TSI parsing failed: %s", e)
-        return None
-
-
-def _get_cci(case_id: str) -> Optional[CCIComponents]:
-    case_map = {v.case_id: v for v in BUILTIN_CASES.values()}
-    case = case_map.get(case_id)
-    return case.cci if case else None
-
-
-def _update_profile(
-    payload: dict,
-    user_id: int | None,
-    session_data: SessionData,
-    tsi: Optional[TSIComponents],
-) -> Optional[SpecialistProfile]:
-    existing = payload.get("profile")
-    profile = (
-        SpecialistProfile.model_validate(existing)
-        if existing
-        else SpecialistProfile(specialist_id=str(user_id or 0))
-    )
-
-    profile.sessions_count += 1
-    profile.cases_completed.append(session_data.case_id)
-
-    if tsi:
-        profile.tsi_history.append(tsi.tsi)
-        profile.average_tsi = round(sum(profile.tsi_history) / len(profile.tsi_history), 2)
-
-    total_signals = len(session_data.signal_log)
-    if total_signals > 0:
-        yellows = session_data.signal_log.count("🟡")
-        reds = session_data.signal_log.count("🔴")
-        prev = profile.sessions_count - 1
-        if prev > 0:
-            profile.yellow_ratio = round(
-                (profile.yellow_ratio * prev + yellows / total_signals) / profile.sessions_count, 2
-            )
-            profile.red_ratio = round(
-                (profile.red_ratio * prev + reds / total_signals) / profile.sessions_count, 2
-            )
-        else:
-            profile.yellow_ratio = round(yellows / total_signals, 2)
-            profile.red_ratio = round(reds / total_signals, 2)
-
-    if session_data.iteration_log:
-        avg_delta = sum(it.delta.trust for it in session_data.iteration_log) / len(session_data.iteration_log)
-        prev = profile.sessions_count - 1
-        if prev > 0:
-            profile.average_delta_trust = round(
-                (profile.average_delta_trust * prev + avg_delta) / profile.sessions_count, 2
-            )
-        else:
-            profile.average_delta_trust = round(avg_delta, 2)
-
-    return profile
-
-
-async def _send_text_fallback(bot: Bot, chat_id: int, report_text: str, tsi=None) -> None:
-    header = "📋 <b>АНАЛИТИЧЕСКИЙ ОТЧЁТ</b>\n\n"
-    if tsi:
-        header += f"📊 TSI: {tsi.tsi:.2f} ({tsi.interpretation})\n\n"
-    full_text = header + _escape_html(report_text)
-    for chunk in _split_text(full_text):
-        await bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
-
-
-def _split_text(text: str, max_len: int = 4000) -> list[str]:
-    if len(text) <= max_len:
-        return [text]
-    chunks = []
-    while text:
-        if len(text) <= max_len:
-            chunks.append(text)
-            break
-        split_pos = text.rfind("\n", 0, max_len)
-        if split_pos == -1:
-            split_pos = max_len
-        chunks.append(text[:split_pos])
-        text = text[split_pos:].lstrip("\n")
-    return chunks
