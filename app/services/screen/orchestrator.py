@@ -149,7 +149,7 @@ class ScreenOrchestrator:
         await self.db.execute(
             update(ScreeningAssessment)
             .where(ScreeningAssessment.id == assessment_id)
-            .values(phase=2)
+            .values(phase=2, phase2_questions=0)
         )
         await self.db.flush()
 
@@ -176,7 +176,7 @@ class ScreenOrchestrator:
             }
             state = self.engine.process_response(state, response)
 
-        new_q_count = state["phase2_questions"] + 1
+        new_q_count = state.get("phase2_questions", 0) + 1
         state["phase2_questions"] = new_q_count
         await self._save_engine_state(assessment_id, state, phase2_questions=new_q_count)
 
