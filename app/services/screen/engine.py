@@ -33,13 +33,14 @@ class ScreeningEngine:
             return ({a: 0.0 for a in AXES}, {l: 0.0 for l in LAYERS})
 
         n = len(responses)
+        scale = math.sqrt(n)
 
         raw_axis = {
-            a: sum(r.get("axis_weights", {}).get(a, 0.0) for r in responses) / n
+            a: sum(r.get("axis_weights", {}).get(a, 0.0) for r in responses) / scale
             for a in AXES
         }
         raw_layer = {
-            l: sum(r.get("layer_weights", {}).get(l, 0.0) for r in responses) / n
+            l: sum(r.get("layer_weights", {}).get(l, 0.0) for r in responses) / scale
             for l in LAYERS
         }
 
