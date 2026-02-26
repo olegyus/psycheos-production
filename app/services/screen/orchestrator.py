@@ -182,16 +182,15 @@ class ScreenOrchestrator:
 
         stop = await self._check_stop_phase2(state, prev_axis_vector)
 
-        if (stop and new_q_count >= _MIN_PHASE2_QUESTIONS) or (new_q_count >= _MAX_PHASE2_QUESTIONS and state["confidence"] >= _CONFIDENCE_THRESHOLD):
-            report = await self._generate_report(assessment_id)
-            return {"action": "complete", "report": report}
+        exit_by_confidence = state.get("confidence", 0.0) >= _CONFIDENCE_THRESHOLD
+        exit_by_count = new_q_count >= _MAX_PHASE2_QUESTIONS
+        exit_by_stop = stop and new_q_count >= _MIN_PHASE2_QUESTIONS
 
-        if new_q_count < _MAX_PHASE2_QUESTIONS:
-            q = await self._select_next_phase2_question(state)
-            return {"action": "show_screen", "screen": q, "phase": 2}
-
-        # Reached max Phase 2 questions
-        if state["confidence"] < _CONFIDENCE_THRESHOLD:
+        if exit_by_confidence or exit_by_count or exit_by_stop:
+            if exit_by_confidence:
+                report = await self._generate_report(assessment_id)
+                return {"action": "complete", "report": report}
+            # Exited by count or stop signal — move to Phase 3
             await self.db.execute(
                 update(ScreeningAssessment)
                 .where(ScreeningAssessment.id == assessment_id)
@@ -201,8 +200,8 @@ class ScreenOrchestrator:
             q = await self._select_next_phase3_question(state)
             return {"action": "show_screen", "screen": q, "phase": 3}
 
-        report = await self._generate_report(assessment_id)
-        return {"action": "complete", "report": report}
+        q = await self._select_next_phase2_question(state)
+        return {"action": "show_screen", "screen": q, "phase": 2}
 
     async def process_phase3_response(
         self,
