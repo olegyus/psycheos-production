@@ -304,7 +304,14 @@ async def _handle_callback(
             await _show_multi_select(bot, chat_id, result["screen"], [], header=ph1_header)
         elif result["action"] == "complete":
             await bot.send_message(chat_id=chat_id, text="⏳ Анализирую ваши ответы...")
-            await _handle_completion(bot, db, chat_id, user_id, state, result)
+            try:
+                await _handle_completion(bot, db, chat_id, user_id, state, result)
+            except Exception:
+                logger.exception("[screen] completion failed for chat_id=%s", chat_id)
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="Произошла ошибка при формировании отчёта. Попробуйте написать /start — мы восстановим ваш прогресс.",
+                )
         return
 
 

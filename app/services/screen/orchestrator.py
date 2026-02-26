@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 _HAIKU = "claude-haiku-4-5-20251001"
 _SONNET = "claude-sonnet-4-5-20250929"
 _CONFIDENCE_THRESHOLD = 0.85
+_MIN_PHASE2_QUESTIONS = 3
 _MAX_PHASE2_QUESTIONS = 3
 _MAX_PHASE3_QUESTIONS = 5
 
@@ -181,7 +182,7 @@ class ScreenOrchestrator:
 
         stop = await self._check_stop_phase2(state, prev_axis_vector)
 
-        if stop or new_q_count >= _MAX_PHASE2_QUESTIONS and state["confidence"] >= _CONFIDENCE_THRESHOLD:
+        if (stop and new_q_count >= _MIN_PHASE2_QUESTIONS) or (new_q_count >= _MAX_PHASE2_QUESTIONS and state["confidence"] >= _CONFIDENCE_THRESHOLD):
             report = await self._generate_report(assessment_id)
             return {"action": "complete", "report": report}
 
@@ -374,11 +375,17 @@ class ScreenOrchestrator:
             except Exception:
                 logger.warning("[screen] Stop-decision JSON parse failed; using local fallback")
 
-        # Local fallback
+        # Local fallback — never stop before the minimum question count is reached
         questions_asked = state.get("phase2_questions", 0)
         confidence = state.get("confidence", 0.0)
+        if questions_asked < _MIN_PHASE2_QUESTIONS:
+            return False
         all_delta_small = all(v < 0.1 for v in delta.values())
-        return all_delta_small or confidence >= _CONFIDENCE_THRESHOLD or questions_asked >= _MAX_PHASE2_QUESTIONS
+        return (
+            (all_delta_small and questions_asked >= _MIN_PHASE2_QUESTIONS)
+            or confidence >= _CONFIDENCE_THRESHOLD
+            or questions_asked >= _MAX_PHASE2_QUESTIONS
+        )
 
     async def _generate_report(self, assessment_id: UUID) -> dict:
         """Generate and persist the final report."""
