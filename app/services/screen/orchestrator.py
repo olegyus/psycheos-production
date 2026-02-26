@@ -36,7 +36,7 @@ _HAIKU = "claude-haiku-4-5-20251001"
 _SONNET = "claude-sonnet-4-5-20250929"
 _CONFIDENCE_THRESHOLD = 0.85
 _MIN_PHASE2_QUESTIONS = 3
-_MAX_PHASE2_QUESTIONS = 3
+_MAX_PHASE2_QUESTIONS = 6
 _MAX_PHASE3_QUESTIONS = 5
 
 
@@ -185,6 +185,14 @@ class ScreenOrchestrator:
         exit_by_confidence = state.get("confidence", 0.0) >= _CONFIDENCE_THRESHOLD
         exit_by_count = new_q_count >= _MAX_PHASE2_QUESTIONS
         exit_by_stop = stop and new_q_count >= _MIN_PHASE2_QUESTIONS
+
+        logger.info(
+            "[phase2] q=%d, max=%d, min=%d, conf=%.3f, stop=%s, "
+            "exit_conf=%s, exit_count=%s, exit_stop=%s",
+            new_q_count, _MAX_PHASE2_QUESTIONS, _MIN_PHASE2_QUESTIONS,
+            state.get("confidence", 0.0), stop,
+            exit_by_confidence, exit_by_count, exit_by_stop,
+        )
 
         if exit_by_confidence or exit_by_count or exit_by_stop:
             if exit_by_confidence:
