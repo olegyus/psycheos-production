@@ -12,9 +12,6 @@ engine = create_async_engine(
     settings.database_url_async,
     poolclass=NullPool,
     echo=settings.DEBUG,
-    connect_args={
-        "statement_cache_size": 0,
-    },
 )
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
