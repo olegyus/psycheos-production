@@ -20,7 +20,7 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
+from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, LabeledPrice
 
 from app.config import settings
 from app.webhooks.common import upsert_chat_state
@@ -366,7 +366,7 @@ async def handle_callback(
 
     if data.startswith("artifact_"):
         artifact_id_str = data[len("artifact_"):]
-        await show_artifact_detail(query, db, artifact_id_str)
+        await show_artifact_detail(query, bot, db, artifact_id_str, chat_id)
         return
 
     if data.startswith("case_") and data != "case_new":
@@ -1024,8 +1024,14 @@ async def show_case_artifacts(query, db: AsyncSession, context_id_str: str) -> N
     )
 
 
-async def show_artifact_detail(query, db: AsyncSession, artifact_id_str: str) -> None:
-    """Show summary of a single artifact with a back-to-list button."""
+async def show_artifact_detail(
+    query, bot: Bot, db: AsyncSession, artifact_id_str: str, chat_id: int
+) -> None:
+    """Show artifact detail.
+
+    Screen artifacts: edit message to a brief header then send JSON + TXT files.
+    Other services: show text summary with back button.
+    """
     try:
         artifact_id = uuid.UUID(artifact_id_str)
     except ValueError:
@@ -1042,13 +1048,36 @@ async def show_artifact_detail(query, db: AsyncSession, artifact_id_str: str) ->
 
     label = _SERVICE_LABEL.get(a.service_id, a.service_id)
     date_str = a.created_at.strftime("%d.%m.%Y %H:%M")
-    summary_text = a.summary or "_Краткое описание недоступно._"
-
     context_id_str = str(a.context_id)
-    back_btn = InlineKeyboardButton(
-        "◀️ К списку", callback_data=f"case_artifacts_{context_id_str}"
-    )
+    back_btn = InlineKeyboardButton("◀️ К списку", callback_data=f"case_artifacts_{context_id_str}")
 
+    if a.service_id == "screen":
+        await query.edit_message_text(
+            f"📊 *{label}*\n🗓 {date_str}",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[back_btn]]),
+        )
+        date_prefix = a.created_at.strftime("%Y%m%d")
+        ctx_prefix = context_id_str[:8]
+
+        report_json = a.payload.get("report_json", a.payload)
+        json_bytes = json.dumps(report_json, ensure_ascii=False, indent=2).encode("utf-8")
+        await bot.send_document(
+            chat_id=chat_id,
+            document=InputFile(io.BytesIO(json_bytes), filename=f"screen_{ctx_prefix}_{date_prefix}.json"),
+            caption="📊 Скрининг — структурированные данные (JSON)",
+        )
+
+        report_text: str = a.payload.get("report_text") or json.dumps(report_json, ensure_ascii=False, indent=2)
+        txt_bytes = report_text.encode("utf-8")
+        await bot.send_document(
+            chat_id=chat_id,
+            document=InputFile(io.BytesIO(txt_bytes), filename=f"screen_{ctx_prefix}_{date_prefix}.txt"),
+            caption="📋 Скрининг — отчёт для специалиста (TXT)",
+        )
+        return
+
+    summary_text = a.summary or "_Краткое описание недоступно._"
     await query.edit_message_text(
         f"📊 *{label}*\n\n"
         f"🗓 {date_str}\n\n"
