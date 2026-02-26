@@ -51,10 +51,12 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     @property
     def database_url_async(self) -> str:
-        """Ensure asyncpg scheme for SQLAlchemy."""
+        """Ensure psycopg scheme for SQLAlchemy."""
         url = self.DATABASE_URL_POOLER
         if url.startswith("postgresql://"):
-            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+        elif url.startswith("postgresql+asyncpg://"):
+            url = url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
         return url
     @property
     def admin_ids(self) -> set[int]:
