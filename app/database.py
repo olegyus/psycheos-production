@@ -4,18 +4,16 @@ Uses Supabase pooler (port 6543) for production connections.
 """
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 from app.config import settings
 
 
 engine = create_async_engine(
-    settings.DATABASE_URL_POOLER,
-    pool_size=settings.DB_POOL_SIZE,
-    max_overflow=settings.DB_MAX_OVERFLOW,
-    pool_pre_ping=True,
+    settings.database_url_async,
+    poolclass=NullPool,
     echo=settings.DEBUG,
     connect_args={
         "statement_cache_size": 0,
-        "prepared_statement_cache_size": 0,
     },
 )
 

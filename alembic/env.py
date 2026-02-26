@@ -19,9 +19,9 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    """Use DATABASE_URL (direct connection) — never the pooler."""
+    """Use DATABASE_URL_DIRECT (port 5432) — bypasses PgBouncer, required by Alembic."""
     from app.config import settings
-    return settings.DATABASE_URL
+    return settings.DATABASE_URL_DIRECT
 
 
 def run_migrations_offline() -> None:
@@ -42,7 +42,11 @@ def do_run_migrations(connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    engine = create_async_engine(get_url(), poolclass=pool.NullPool)
+    engine = create_async_engine(
+        get_url(),
+        poolclass=pool.NullPool,
+        connect_args={"statement_cache_size": 0},
+    )
     async with engine.begin() as conn:
         await conn.run_sync(do_run_migrations)
     await engine.dispose()

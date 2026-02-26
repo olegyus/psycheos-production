@@ -121,6 +121,18 @@ Each bot has its own Telegram token and webhook secret, all in env vars.
 - PK: `(bot_id, update_id)` — prevents double-processing on webhook retries
 - INSERT ... ON CONFLICT DO NOTHING — if rowcount=0 → duplicate, skip
 
+### `artifacts` — Persisted tool-bot session outputs (Phase 5)
+- `artifact_id` UUID PK (gen_random_uuid)
+- `context_id` UUID FK → `contexts.context_id` ON DELETE CASCADE
+- `service_id` VARCHAR — `"interpretator"` | `"conceptualizator"` | `"simulator"`
+- `run_id` UUID — = `link_token.jti`; idempotency key per session
+- `specialist_telegram_id` BigInteger — denormalised Telegram ID (avoids user JOIN)
+- `payload` JSONB — full structured output (service-specific)
+- `summary` TEXT nullable — 1-2 line description shown in Pro bot list
+- `created_at` TIMESTAMPTZ
+- UNIQUE(run_id, service_id) — one artifact per run, idempotent on retry
+- INDEX(context_id, created_at DESC) — primary list access pattern
+
 ---
 
 ## Webhook Processing Pipeline
@@ -151,6 +163,7 @@ POST /webhook/{bot_id}
 | `admin_panel`        | `/admin` (admin only)           | Admin panel                        |
 | `waiting_case_name`  | "➕ Новый кейс" button          | Waiting for specialist to type case name |
 | `waiting_invite_note`| "🔗 Создать приглашение" button | Waiting for admin to type invite note |
+| `reference_chat`     | "📚 Справочник" button          | Multi-turn Q&A with Claude Haiku about PsycheOS theory; history in `state_payload["reference_history"]` (last 10 pairs) |
 
 ---
 
@@ -321,10 +334,12 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 
 ## Deployment (Railway)
 
-- **Process**: `web: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}` (Procfile)
+- **Processes** (Procfile):
+  - `web: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}`
+  - `worker: python -m app.worker` — async Claude job processor (Phase 6)
 - **Environment**: Set all env vars in Railway dashboard
 - **Database**: Supabase PostgreSQL — use pooler URL for the app, direct URL for migrations only
-- **Scaling**: Keep `DB_POOL_SIZE` low (5) per replica — Supabase free tier has connection limits
+- **Scaling**: Keep `DB_POOL_SIZE` low (5) per replica — Supabase free tier has connection limits; one worker process is sufficient for ≤30 users
 - **Sentry**: Set `SENTRY_DSN` for error tracking; `environment` auto-set based on `DEBUG` flag
 - **Webhook registration**: Run `python -m scripts.set_webhooks` after each new deployment if the URL changes
 
