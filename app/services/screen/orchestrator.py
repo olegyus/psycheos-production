@@ -174,7 +174,7 @@ class ScreenOrchestrator:
                 "node": current_screen.get("node"),  # tracked for dedup
                 "phase": 2,
             }
-            state = self.engine.process_response(state, response)
+            state = {**state, **self.engine.process_response(state, response)}
 
         new_q_count = state.get("phase2_questions", 0) + 1
         state["phase2_questions"] = new_q_count
@@ -228,7 +228,7 @@ class ScreenOrchestrator:
                 "node": current_screen.get("node"),  # tracked for dedup
                 "phase": 3,
             }
-            state = self.engine.process_response(state, response)
+            state = {**state, **self.engine.process_response(state, response)}
 
         new_q_count = state["phase3_questions"] + 1
         state["phase3_questions"] = new_q_count
