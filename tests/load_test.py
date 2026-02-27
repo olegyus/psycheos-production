@@ -562,24 +562,30 @@ async def test_30_concurrent_interpreter_sessions() -> None:
         print(f"\n  ERRORS ({len(errors)}):")
         for e in errors:
             print(f"    ✗ {e}")
-        bottleneck = "See errors above."
     else:
         print(f"\n  ✓ All {NUM_USERS} sessions completed successfully")
-        # Identify slowest phase
-        avg_by_phase = {
-            phase: sum(times) / len(times)
-            for phase, times in phase_times.items()
-            if times
-        }
-        slowest = max(avg_by_phase, key=avg_by_phase.__getitem__)
-        bottleneck = (
-            f"Slowest phase: {slowest!r} "
-            f"(avg {avg_by_phase[slowest] * 1000:.2f} ms). "
-            "In production this maps to the real Claude API call — "
-            "the synchronous Claude call inside the worker is the bottleneck "
-            "when multiple users share a single worker process."
-        )
-        print(f"\n  Bottleneck: {bottleneck}")
+
+    # ── Bottleneck analysis ────────────────────────────────────────────────────
+    # Phases 3 / 4 / 6 each make one real Claude API call in production.
+    # In this mock test they take ~1 ms; in production ~3-10 s each.
+    # A single worker (WORKER_CONCURRENCY=1) processes them serially:
+    #   30 users × 3 Claude calls × avg 7 s = 630 s wait for the last user.
+    # With WORKER_CONCURRENCY=3 the three calls overlap → ~210 s.
+    # With WORKER_CONCURRENCY=3 + 2 worker replicas (Variant A) → ~70 s.
+    _CLAUDE_PHASES = {"3_interp_intake", "4_interp_questions", "6_interp_run"}
+    _EST_CLAUDE_S = 7.0   # conservative production estimate per Claude call (seconds)
+    _CONCURRENCY  = 1     # reflects current WORKER_CONCURRENCY in tested code
+
+    total_claude_jobs = NUM_USERS * len(_CLAUDE_PHASES)
+    serial_wall_s     = total_claude_jobs * _EST_CLAUDE_S
+    concurrent_wall_s = serial_wall_s / _CONCURRENCY
+
+    print(f"\n  Production bottleneck estimate (WORKER_CONCURRENCY={_CONCURRENCY}):")
+    print(f"    Claude jobs total:  {total_claude_jobs}  ({NUM_USERS} users × {len(_CLAUDE_PHASES)} jobs)")
+    print(f"    Est. per Claude call: ~{_EST_CLAUDE_S:.0f} s")
+    print(f"    Serial wall-time:   ~{serial_wall_s:.0f} s  (worst-case, last user waits)")
+    print(f"    With WORKER_CONCURRENCY=3: ~{serial_wall_s / 3:.0f} s")
+    print(f"    Fix → set WORKER_CONCURRENCY=3 in Railway env (already implemented in worker)")
 
     print(f"{'=' * 66}\n")
 

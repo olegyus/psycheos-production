@@ -19,6 +19,7 @@ Graceful shutdown on SIGTERM / SIGINT: finishes the current job, then exits.
 """
 import asyncio
 import logging
+import os
 import signal
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -41,6 +42,14 @@ logger = logging.getLogger(__name__)
 
 JOB_POLL_INTERVAL = 1.0       # seconds to sleep when the job queue is empty
 OUTBOX_BURST = 10             # max outbox messages dispatched per event-loop tick
+
+# Number of jobs to process concurrently in one event-loop tick.
+# Set via env var WORKER_CONCURRENCY (default 1 = serial, backward-compatible).
+# Each slot claims its own job via FOR UPDATE SKIP LOCKED — no double-processing.
+# Scales linearly with Claude throughput: WORKER_CONCURRENCY=3 processes 3
+# Claude calls in parallel, reducing wall-time for 90 queued jobs by ~3×.
+# Keep ≤ DB_POOL_SIZE to avoid exhausting the connection pool.
+WORKER_CONCURRENCY: int = max(1, int(os.getenv("WORKER_CONCURRENCY", "1")))
 
 # A job in 'running' status for longer than this is assumed to be orphaned
 # (worker crashed mid-execution). It will be reset to 'pending' so another
@@ -241,7 +250,10 @@ async def _drain_outbox(bots: dict[str, Bot]) -> None:
 
 async def _run(bots: dict[str, Bot]) -> None:
     global _running
-    logger.info("[worker] started — bots: %s", sorted(bots.keys()))
+    logger.info(
+        "[worker] started — bots: %s  concurrency: %d",
+        sorted(bots.keys()), WORKER_CONCURRENCY,
+    )
 
     # Recover any jobs left in 'running' status from a previous crash.
     await _recover_stuck_jobs()
@@ -250,7 +262,13 @@ async def _run(bots: dict[str, Bot]) -> None:
 
     while _running:
         try:
-            had_job = await _process_one_job(bots)
+            # Claim and process up to WORKER_CONCURRENCY jobs in parallel.
+            # FOR UPDATE SKIP LOCKED ensures each job is claimed by exactly
+            # one coroutine; extra slots return False if the queue is shorter.
+            results = await asyncio.gather(
+                *[_process_one_job(bots) for _ in range(WORKER_CONCURRENCY)]
+            )
+            had_job = any(results)
             await _drain_outbox(bots)
             if not had_job:
                 await asyncio.sleep(JOB_POLL_INTERVAL)
