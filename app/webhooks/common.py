@@ -49,13 +49,21 @@ async def is_duplicate_update(
 
 
 async def load_chat_state(
-    db: AsyncSession, bot_id: str, chat_id: int
+    db: AsyncSession, bot_id: str, chat_id: int, *, for_update: bool = False
 ) -> BotChatState | None:
-    """Load current FSM state for (bot, chat) pair."""
+    """Load current FSM state for (bot, chat) pair.
+
+    Pass for_update=True to acquire a row-level lock (SELECT ... FOR UPDATE).
+    This prevents concurrent webhook handlers from racing on the same chat
+    state: the second request blocks until the first transaction commits.
+    Only has effect when called within an open transaction.
+    """
     stmt = select(BotChatState).where(
         BotChatState.bot_id == bot_id,
         BotChatState.chat_id == chat_id,
     )
+    if for_update:
+        stmt = stmt.with_for_update()
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
 

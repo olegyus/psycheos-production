@@ -11,15 +11,20 @@ Event loop:
   4. Drain up to OUTBOX_BURST pending outbox messages.
   5. Sleep JOB_POLL_INTERVAL seconds if the queue was empty, then repeat.
 
+Periodic maintenance (once per _CLEANUP_INTERVAL):
+  - Recover stuck jobs: running → pending for jobs idle > _STUCK_JOB_TIMEOUT.
+  - Clean up old telegram_update_dedup rows (older than 1 hour).
+
 Graceful shutdown on SIGTERM / SIGINT: finishes the current job, then exits.
 """
 import asyncio
 import logging
 import signal
 import uuid
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update as sa_update, text
 from telegram import Bot
 
 from app.config import settings
@@ -34,8 +39,16 @@ logger = logging.getLogger(__name__)
 
 # ── Tuning ────────────────────────────────────────────────────────────────────
 
-JOB_POLL_INTERVAL = 1.0  # seconds to sleep when the job queue is empty
-OUTBOX_BURST = 10        # max outbox messages dispatched per event-loop tick
+JOB_POLL_INTERVAL = 1.0       # seconds to sleep when the job queue is empty
+OUTBOX_BURST = 10             # max outbox messages dispatched per event-loop tick
+
+# A job in 'running' status for longer than this is assumed to be orphaned
+# (worker crashed mid-execution). It will be reset to 'pending' so another
+# worker instance can pick it up.
+_STUCK_JOB_TIMEOUT = timedelta(minutes=10)
+
+# How often to run periodic maintenance (stuck-job sweep + dedup cleanup).
+_CLEANUP_INTERVAL = timedelta(hours=1)
 
 # ── Shutdown flag (mutated by signal handler) ─────────────────────────────────
 
@@ -46,6 +59,62 @@ def _handle_signal(signum, _frame) -> None:
     global _running
     logger.info("[worker] received signal %s — stopping after current job", signum)
     _running = False
+
+
+# ── Maintenance helpers ────────────────────────────────────────────────────────
+
+async def _recover_stuck_jobs() -> None:
+    """Reset jobs stuck in 'running' status back to 'pending'.
+
+    This handles the case where the worker process crashed mid-job.  The job
+    was left in status='running' with no one to complete it.  We detect these
+    by their started_at timestamp and reschedule them so any worker instance
+    can pick them up.  The existing attempts counter is preserved, so the
+    normal max_attempts / exponential-backoff logic still applies.
+    """
+    cutoff = datetime.now(timezone.utc) - _STUCK_JOB_TIMEOUT
+    try:
+        async with async_session() as db:
+            result = await db.execute(
+                sa_update(JobModel)
+                .where(
+                    JobModel.status == "running",
+                    JobModel.started_at <= cutoff,
+                )
+                .values(status="pending", started_at=None)
+            )
+            recovered = result.rowcount
+            await db.commit()
+            if recovered:
+                logger.warning(
+                    "[worker] recovered %d stuck job(s) (running > %s)",
+                    recovered, _STUCK_JOB_TIMEOUT,
+                )
+    except Exception:
+        logger.exception("[worker] error recovering stuck jobs")
+
+
+async def _cleanup_dedup_table() -> None:
+    """Delete Telegram update dedup entries older than 1 hour.
+
+    The dedup table has no TTL or auto-vacuum: without periodic cleanup it
+    grows indefinitely.  Entries older than 1 hour are safe to delete because
+    Telegram stops retrying updates after ~60 seconds.
+    """
+    try:
+        async with async_session() as db:
+            result = await db.execute(
+                text(
+                    "DELETE FROM telegram_update_dedup"
+                    " WHERE received_at < now() - interval '1 hour'"
+                )
+            )
+            deleted = result.rowcount
+            await db.commit()
+            if deleted:
+                logger.info("[worker] dedup cleanup: deleted %d old entries", deleted)
+    except Exception:
+        logger.exception("[worker] error cleaning up dedup table")
 
 
 # ── Core helpers ──────────────────────────────────────────────────────────────
@@ -173,15 +242,30 @@ async def _drain_outbox(bots: dict[str, Bot]) -> None:
 async def _run(bots: dict[str, Bot]) -> None:
     global _running
     logger.info("[worker] started — bots: %s", sorted(bots.keys()))
+
+    # Recover any jobs left in 'running' status from a previous crash.
+    await _recover_stuck_jobs()
+
+    last_maintenance = datetime.now(timezone.utc)
+
     while _running:
         try:
             had_job = await _process_one_job(bots)
             await _drain_outbox(bots)
             if not had_job:
                 await asyncio.sleep(JOB_POLL_INTERVAL)
+
+            # Periodic maintenance: run once per _CLEANUP_INTERVAL.
+            now = datetime.now(timezone.utc)
+            if (now - last_maintenance) >= _CLEANUP_INTERVAL:
+                await _recover_stuck_jobs()
+                await _cleanup_dedup_table()
+                last_maintenance = now
+
         except Exception:
             logger.exception("[worker] unhandled error in event loop — continuing")
             await asyncio.sleep(JOB_POLL_INTERVAL)
+
     logger.info("[worker] shutdown complete")
 
 

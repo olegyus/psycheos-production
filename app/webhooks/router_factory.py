@@ -80,8 +80,8 @@ def create_webhook_router(
             logger.info(f"[{bot_id}] Duplicate update {update.update_id}, skipping")
             return {"ok": True}
 
-        # 5. Load FSM state
-        state = await load_chat_state(db, bot_id, chat_id)
+        # 5. Load FSM state (with row-level lock to prevent concurrent state mutation)
+        state = await load_chat_state(db, bot_id, chat_id, for_update=True)
 
         # 6. Call bot-specific handler
         try:
