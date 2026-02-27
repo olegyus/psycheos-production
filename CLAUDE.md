@@ -4,13 +4,13 @@
 
 PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for **5 Telegram bots** powering a psychological AI assistant platform for specialists (psychologists, coaches, etc.).
 
-- **Framework**: FastAPI + async SQLAlchemy (asyncpg)
-- **Database**: PostgreSQL via Supabase (connection pooler in production)
+- **Framework**: FastAPI + async SQLAlchemy (psycopg3 driver: `postgresql+psycopg://`)
+- **Database**: PostgreSQL via Supabase (PgBouncer pooler port 6543 in production; port 5432 direct for Alembic)
 - **Telegram**: `python-telegram-bot` 21.x (webhook mode only, no polling)
 - **AI**: Anthropic Claude API ✅ интегрирован — Simulator, Conceptualizer, Interpreter используют `claude-sonnet-4-5-20250929`; Screen v2 — при генерации отчёта (3 Claude-вызова: structural_report + session_bridge + client_summary)
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
-- **Current phase**: Phase 6 **COMPLETE** + Screen report enhancements ✅ (client_summary + DOCX bug fixes); next: Phase 7
+- **Current phase**: Phase 7 **COMPLETE** ✅ (Billing — Telegram Stars)
 
 ---
 
@@ -169,14 +169,17 @@ POST /webhook/{bot_id}
 
 ## Interpretator Bot FSM States
 
-| State               | Trigger                             | Description                                                   |
-|---------------------|-------------------------------------|---------------------------------------------------------------|
-| `active`            | `/start {jti}` verified             | Session open; awaiting first material from specialist         |
-| `intake`            | Claude asks clarifying Q in INTAKE  | Awaiting specialist's answer before material check            |
-| `clarification_loop`| `completeness != "sufficient"`      | Material partial/fragmentary; Claude asks phenomenological Qs (max 2 iterations) |
-| `completed`         | Interpretation sent                 | Session closed; further messages rejected                     |
+| State                    | Trigger                                      | Description                                                          |
+|--------------------------|----------------------------------------------|----------------------------------------------------------------------|
+| `active`                 | `/start {jti}` verified                      | Session open; awaiting first material from specialist                |
+| `intake`                 | Claude asks clarifying Q in INTAKE           | Awaiting specialist's answer before material check                   |
+| `clarification_loop`     | `completeness != "sufficient"`               | Material partial/fragmentary; Claude asks phenomenological Qs (max 2 iterations) |
+| `clarification_questions`| `interp_questions` worker job completes      | Specialist answering 3-4 structured Q&A questions before final interpretation |
+| `completed`              | Interpretation sent                          | Session closed; further messages rejected                            |
 
-Flow: `active` → specialist types material → `_run_intake` (Claude INTAKE prompt, may set `intake`) → `_run_material_check` (Claude MATERIAL_CHECK prompt) → if sufficient: `_run_interpretation`; else → `clarification_loop` (Claude CLARIFICATION_LOOP prompt, max 2 rounds) → `_run_interpretation` → `completed`.
+Flow: `active` → specialist sends material → `interp_photo` (photo) or `interp_intake` (text) worker job → if Claude asks Q: stay in `intake`; if accepted: `interp_questions` job (Claude generates 3-4 questions) → FSM `clarification_questions` → webhook collects answers one by one → when all answered: enqueue `interp_run` → `completed`.
+
+Photo sub-flow: `interp_photo` (vision analysis, stored internally) → immediately enqueues `interp_questions`.
 
 ---
 
@@ -209,8 +212,8 @@ All settings are loaded via pydantic-settings from `.env` file (never committed)
 
 ```env
 # Database
-DATABASE_URL_POOLER=postgresql+asyncpg://...  # Used at runtime (Supabase pooler, port 6543)
-DATABASE_URL=postgresql+asyncpg://...          # Direct URL — only for Alembic migrations
+DATABASE_URL_POOLER=postgresql+psycopg://...   # Used at runtime (Supabase PgBouncer pooler, port 6543)
+DATABASE_URL_DIRECT=postgresql+psycopg://...   # Direct URL — only for Alembic migrations (port 5432)
 
 DB_POOL_SIZE=5        # Per-process pool (keep low — multiple replicas share Supabase)
 DB_MAX_OVERFLOW=5
@@ -267,7 +270,7 @@ uvicorn app.main:app --reload --port 8000
 
 Tables are created automatically on startup via `Base.metadata.create_all` (lifespan event). No migrations needed for new local environments.
 
-**Alembic migrations (production):** На данный момент существует только одна миграция — `0001_create_link_tokens.py`. Таблица `screening_assessment` создана через `create_all` (не через Alembic). Перед следующим `alembic upgrade head` нужно сгенерировать `0002_create_screening_assessment.py`.
+**Alembic migrations (production):** Текущие миграции: `0001_create_link_tokens` → `0002_add_artifacts` → `0003_add_jobs_and_outbox` → `0004_add_billing` → `0005_add_screening_assessment`. Миграция 0005 содержит guard `if table not in inspector.get_table_names()` — безопасна для БД где таблица уже создана через `create_all`.
 
 ### Database Migrations (Alembic)
 
@@ -332,11 +335,16 @@ Never use synchronous SQLAlchemy methods. All DB work happens within the session
 
 ### Supabase Pooler Compatibility
 
-The engine is configured with:
+The engine uses psycopg3 and is configured with:
 ```python
-connect_args={"statement_cache_size": 0, "prepared_statement_cache_size": 0}
+connect_args={"prepare_threshold": None}  # disables automatic statement preparation
 ```
-This is **required** — Supabase's PgBouncer pooler does not support prepared statements.
+This is **required** — Supabase's PgBouncer (transaction mode) does not support server-side prepared statements. `prepare_threshold=None` is the psycopg3 syntax (NOT asyncpg's `statement_cache_size=0`).
+
+Connection pool (AsyncQueuePool):
+```python
+pool_size=10, max_overflow=20, pool_timeout=30, pool_recycle=1800, pool_pre_ping=True
+```
 
 ### Idempotency Keys
 
@@ -379,7 +387,31 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 | 5     | Interpreter Claude gaps: `_run_material_check` + `clarification_loop` FSM state + `clarifications_received` | **COMPLETE** ✅ |
 | 6     | Screen bot: bug fix `_notify_specialist` + `asked_nodes` dedup + UX (typing, phase transitions, Phase 1 progress) | **COMPLETE** ✅ |
 | 6+    | Screen report: `CLIENT_REPORT_PROMPT` + `generate_client_summary` + DOCX fixes (markdown render, max_tokens, client section) | **COMPLETE** ✅ |
-| 7     | Billing (Telegram Stars)                                                           | Planned         |
+| 7     | Billing (Telegram Stars): wallets, usage_ledger, ai_rates, reserve/commit/cancel  | **COMPLETE** ✅ |
+| 7+    | Interpreter: Q&A clarification flow (interp_questions, clarification_questions)    | **COMPLETE** ✅ |
+
+---
+
+## Worker Architecture (async job processor)
+
+`python -m app.worker` — отдельный процесс, обрабатывает Claude-задачи асинхронно.
+
+- **Job claim:** `FOR UPDATE SKIP LOCKED` — безопасно для нескольких реплик воркера.
+- **Zombie recovery:** при старте и раз в час — jobs stuck in `running` > 10 min → reset to `pending` (сохраняя счётчик `attempts`).
+- **Dedup cleanup:** раз в час — DELETE от `telegram_update_dedup` WHERE `received_at < now() - 1 hour`.
+- **Outbox burst:** до 10 сообщений за тик event loop.
+- **Graceful shutdown:** SIGTERM / SIGINT — завершает текущий job, затем выходит.
+
+---
+
+## Known Limitations
+
+| Область | Проблема | Приоритет |
+|---------|----------|-----------|
+| Pro bot | `screen_menu_{context_id}` callback — показывает статус скрининга и кнопки, но кнопка «📥 Скачать отчёт» (`screen_results_{assessment_id}`) — **заглушка**: отправляет txt/json/docx только если `report_json` заполнен, иначе возвращает ошибку | Средний |
+| Pro bot | Требует v2: текущая версия не адаптирована под production (нет полноценной оплаты через Stars через UI, нет истории артефактов в боте) | Высокий |
+| Simulator | Claude-вызовы в `_handle_specialist_message` выполняются прямо в webhook-обработчике (не через worker job) — блокирует webhook-поток на время ответа Claude (~3-10 сек) | Средний |
+| Screen report | Генерация отчёта (3 Claude-вызова) выполняется прямо в webhook-обработчике screen.py (не через worker) — то же что Simulator | Средний |
 
 ---
 
@@ -399,7 +431,7 @@ No authentication required. Used by Railway for healthchecks.
 |------------------|---------------------------|---------------------------------------------------------------------------------------------------------------|
 | Pro              | Требует v2                | Центральный хаб: регистрация, оплата, выход на остальные боты (tool-боты), ИИ-справочник по системе. Текущая версия не адаптирована под продакшн |
 | Screen           | ✅ Phase 6+ DONE          | Phase 6 ✅ + report enhancements ✅: CLIENT_REPORT_PROMPT, generate_client_summary, DOCX markdown render, client section in DOCX, max_tokens=1500 |
-| Interpreter      | ✅ Phase 5 DONE           | `app/webhooks/interpretator.py`; все Claude-гэпы закрыты: material_check + clarification_loop + clarifications_received |
+| Interpreter      | ✅ Phase 7+ DONE          | `app/webhooks/interpretator.py`; Q&A clarification flow: interp_questions job + clarification_questions FSM state; все Claude-гэпы закрыты |
 | Conceptualizer   | ✅ Мигрирован (Phase 4)   | `app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`; оригинал: `./psycheos-conceptualizer`  |
 | Simulator        | ✅ Мигрирован (Phase 4)   | `app/webhooks/simulator.py` + `app/services/simulator/`; оригинал: `./psycheos-simulator`                   |
 
@@ -444,7 +476,7 @@ No authentication required. Used by Railway for healthchecks.
 ## Принятые решения (НЕ МЕНЯТЬ)
 
 - **LinkToken:** `jti` UUID как PK (`gen_random_uuid()`), `UNIQUE(service_id, run_id)` — одна активная сессия на пару (сервис, запуск), `subject_id` = `telegram_id` пользователя, которому выдан пропуск
-- **Alembic:** async через `create_async_engine` + asyncpg, URL берётся из `settings.DATABASE_URL` (прямое соединение, не pooler)
+- **Alembic:** async через `create_async_engine` + psycopg3 (NullPool), URL берётся из `settings.DATABASE_URL_DIRECT` (прямое соединение, порт 5432, не pooler)
 - **Порядок применения миграций:** `alembic upgrade head` применяем только после завершения всех шагов Фазы 3 — не раньше
 - **issue_link / verify_link:** вызываются напрямую из webhook-обработчиков (не через HTTP); HTTP-эндпоинты `/v1/links/*` — для тестирования и внешнего API
 - **Правило 3.4:** `role=client` допустим только для `service_id=screen`; verify для любого другого сервиса с client-токеном → reject
@@ -462,10 +494,11 @@ No authentication required. Used by Railway for healthchecks.
 - **Simulator FSM states:** `setup` (setup_step: mode→case→goal / upload→crisis→goal_practice) → `active` (реплики специалиста → Claude) → `complete`; сессия в `state_payload["session"]` (SessionData), профиль в `state_payload["profile"]` (SpecialistProfile, накопительно)
 - **Simulator report:** `generate_report_docx()` возвращает `io.BytesIO` (не путь к файлу); отправляется через `InputFile(buf, filename=...)` как `.docx`
 - **Simulator PRACTICE mode:** `custom_prompt` (system prompt + данные специалиста) хранится в `state_payload["custom_prompt"]`; при каждом запросе к Claude берётся оттуда
-- **screening_assessment и Alembic:** таблица `screening_assessment` не имеет Alembic-миграции — создаётся через `Base.metadata.create_all` при старте. Миграции Alembic: существует только `0001_create_link_tokens.py`. Следующая генерация: `alembic revision --autogenerate -m "add screening_assessment"` → `0002_...`
+- **screening_assessment и Alembic:** таблица `screening_assessment` покрыта миграцией `0005_add_screening_assessment.py`. Миграция содержит `if "screening_assessment" not in inspector.get_table_names(): return` guard — безопасна для production-БД где таблица уже существует (создана через `create_all`).
 - **Claude model (Phase 4):** все tool-боты (Simulator, Conceptualizer, Interpreter, Screen report) используют `claude-sonnet-4-5-20250929` через `AsyncAnthropic` напрямую (не через обёртку). Модель задаётся константой `_ANTHROPIC_MODEL` в каждом модуле.
-- **Interpreter FSM states (Phase 5):** `active` → specialist types → `_run_intake` (может перейти в `intake` если Claude задал уточняющий вопрос) → `_run_material_check` (completeness: "sufficient" | "partial" | "fragmentary") → если sufficient: `_run_interpretation` → `completed`; иначе → `clarification_loop` (max `_MAX_CLARIFICATION_ITERATIONS = 2` итерации, затем принудительный fallthrough в interpretation). `clarifications_received[]` в payload накапливает ответы специалиста в обоих состояниях `intake` и `clarification_loop`.
+- **Interpreter FSM states (Phase 7+):** `active` → specialist sends material → worker job `interp_intake` (INTAKE prompt; Claude может задать Q → остаётся в `intake`; если принят → enqueue `interp_questions`) или `interp_photo` (vision → enqueue `interp_questions`) → worker job `interp_questions` (QUESTIONS_GENERATION_PROMPT; генерирует 3-4 вопроса; сохраняет в `state_payload["questions"]`) → FSM `clarification_questions` → webhook собирает ответы по одному (без отдельного job) в `state_payload["clarification_qa"]` (список `{question, answer}`) → после последнего ответа enqueue `interp_run` → `completed`. Fallback: если `interp_questions` вернул пустой список — сразу enqueue `interp_run`. `clarification_loop` (max 2 итерации через `clarifications_received[]`) — сохранён для backward compat.
 - **Interpreter `_run_material_check` JSON parsing:** Claude получает инструкцию вернуть `{"completeness": "sufficient|partial|fragmentary", "message": "..."}` — парсинг через `_parse_completeness()` с JSON-first, keyword-fallback (fragmentary / partial / default sufficient) подходом.
+- **Interpreter `interp_questions` / `clarification_questions` (Phase 7+):** `QUESTIONS_GENERATION_PROMPT` инструктирует Claude вернуть `{"questions": ["q1", "q2", "q3"]}` (3-4 вопроса). Worker сохраняет в `state_payload["questions"]`, `state_payload["question_index"] = 0`, `state_payload["clarification_qa"] = []`. Webhook в состоянии `clarification_questions` обрабатывает каждый ответ напрямую (без job): append `{question, answer}` в `clarification_qa`, increment `question_index`, отправляет следующий вопрос. После последнего ответа — enqueue `interp_run`. `interp_run` использует `clarification_qa` как приоритетный источник контекста (В:/О: формат); `clarifications_received` — fallback для старых сессий. Если `interp_questions` вернул пустой список — fallback сразу в `interp_run`.
 - **Screen `asked_nodes` deduplication (Phase 6):** каждый entry в `response_history` дополнен полями `node` (str) и `phase` (int). ScreeningEngine игнорирует лишние ключи (читает только `axis_weights`/`layer_weights` через `.get()`). `_asked_nodes(state)` извлекает set узлов из response_history где phase in (2, 3). `_fallback_node(state, exclude)` итерирует сначала ambiguity_zones, затем all_nodes, пропуская exclude; при исчерпании — wrap к первому узлу. Phase 2/3 routing принимает Claude-предложение только если оно не в exclude.
 - **Screen `_show_multi_select` header (Phase 6):** опциональный параметр `header: str | None = None`; если задан — prepend к тексту вопроса как `"{header}\n\n{question}"`. В Phase 1 оба call-site передают `f"📋 Вопрос {screen_index + 1} из 6"`. Phase 2/3 передают `None` (переменная длина фаз).
 - **Screen `_notify_specialist` fix (Phase 6):** функция принимает `assessment_id_str` + `context_id`; загружает `ScreeningAssessment` по UUID, берёт `assessment.specialist_user_id` (BigInteger Telegram ID) для `chat_id` в Pro-боте. `Context` загружается отдельно только для получения `client_ref` (label). `Context.specialist_user_id` — UUID FK, НЕ Telegram ID.

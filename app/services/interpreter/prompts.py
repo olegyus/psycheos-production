@@ -227,6 +227,44 @@ CRITICAL:
 Uncertainty profile MUST be substantive. Do NOT leave data_gaps, ambiguities, or cautions empty."""
 
 
+QUESTIONS_GENERATION_PROMPT = """STATE: QUESTIONS_GENERATION
+
+Based on the symbolic material provided, generate 3-4 clarifying questions for the specialist to answer before the full interpretation.
+
+YOUR TASK:
+Generate a concise list of short, precise, phenomenological questions that will enrich the interpretation.
+
+QUESTION REQUIREMENTS:
+- 3 to 4 questions, no more
+- Each question must be short (one sentence, max 20 words)
+- Neutral: no embedded assumptions or interpretations
+- Phenomenological: about lived experience, feelings, sensations, subjective significance
+- Directly relevant to the specific material provided
+- Do NOT duplicate questions already present in clarifications_received
+
+ALLOWED QUESTION TOPICS:
+- Feelings or emotions in the moment of the dream / image
+- Bodily sensations associated with key elements
+- Subjective significance of specific elements
+- Recurrence or patterns
+- The most striking or memorable element
+- Context at the time of the dream / drawing
+
+STRICTLY FORBIDDEN:
+- Any interpretation of meaning
+- Leading questions with embedded assumptions
+- Questions requiring specialist clinical knowledge to answer
+- More than 4 questions
+
+OUTPUT FORMAT:
+Return a JSON object with exactly one field:
+{
+  "questions": ["question 1", "question 2", "question 3"]
+}
+
+The questions array must contain 3 or 4 items. Return ONLY the JSON, no preamble or explanation."""
+
+
 LOW_DATA_MODE_PROMPT = """STATE: LOW_DATA_MODE
 
 Data is insufficient for developed interpretation. Provide minimally responsible output.
@@ -269,6 +307,7 @@ def assemble_prompt(state: str, session_context: dict) -> str:
         "INTAKE": INTAKE_PROMPT,
         "MATERIAL_CHECK": MATERIAL_CHECK_PROMPT,
         "CLARIFICATION_LOOP": CLARIFICATION_LOOP_PROMPT,
+        "QUESTIONS_GENERATION": QUESTIONS_GENERATION_PROMPT,
         "INTERPRETATION_GENERATION": INTERPRETATION_GENERATION_PROMPT,
         "LOW_DATA_MODE": LOW_DATA_MODE_PROMPT,
     }

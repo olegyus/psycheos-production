@@ -2,17 +2,20 @@
 Webhook handler for Interpretator bot (Phase 4 → Phase 6 async).
 
 State machine (bot_chat_state.state):
-  active     — session opened via /start {jti}, awaiting first material
-  intake     — enqueued INTAKE job; awaiting worker response
-  completed  — interpretation sent; session closed
+  active                — session opened via /start {jti}, awaiting first material
+  intake                — INTAKE job running; worker may ask a clarifying question
+  clarification_questions — specialist answering worker-generated questions one by one
+  completed             — interpretation sent; session closed
 
-All Claude API calls have been moved to app/worker/handlers/interpretator.py.
+All Claude API calls live in app/worker/handlers/interpretator.py.
 The webhook now:
   1. Downloads + base64-encodes photos (no Claude).
   2. Appends material to accumulated_material.
   3. Persists state.
   4. Enqueues the appropriate worker job.
   5. Sends an immediate ack message.
+  6. In clarification_questions state: collects answers directly, sends next
+     question or enqueues interp_run when all questions answered.
 """
 import base64
 import logging
@@ -22,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Bot, Update
 
 from app.models.bot_chat_state import BotChatState
-from app.services.job_queue import enqueue
+from app.services.job_queue import enqueue, is_job_pending_for_chat
 from app.services.links import LinkVerifyError, verify_link
 from app.webhooks.common import upsert_chat_state
 
@@ -122,8 +125,10 @@ async def _handle_text(
     bot: Bot, db: AsyncSession, text: str,
     state: BotChatState | None, chat_id: int, user_id: int | None,
 ) -> None:
-    if state is None or state.state not in ("active", "intake", "clarification_loop"):
-        if state and state.state == "completed":
+    current_state = state.state if state else None
+
+    if current_state not in ("active", "intake", "clarification_loop", "clarification_questions"):
+        if current_state == "completed":
             await bot.send_message(
                 chat_id=chat_id,
                 text="Сессия завершена. Запустите новую через бот Pro.",
@@ -135,18 +140,32 @@ async def _handle_text(
             )
         return
 
+    # Clarification questions state is handled separately — no job enqueue per answer.
+    if current_state == "clarification_questions":
+        await _handle_clarification_answer(bot, db, text, state, chat_id, user_id)
+        return
+
+    # Guard: do not double-enqueue if a job is still running for this chat.
+    if await is_job_pending_for_chat(db, BOT_ID, chat_id):
+        await bot.send_message(
+            chat_id=chat_id,
+            text="⏳ Ещё анализирую предыдущее сообщение...",
+        )
+        return
+
     payload = dict(state.state_payload or {})
     payload.setdefault("accumulated_material", []).append({
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "content": text,
     })
-    # When specialist answers any clarifying question, record it separately
-    if state.state in ("intake", "clarification_loop"):
+    # When specialist answers a clarifying question in intake/clarification_loop,
+    # record it separately for the interpretation prompt.
+    if current_state in ("intake", "clarification_loop"):
         payload.setdefault("clarifications_received", []).append(text)
 
     # Persist state with new material before enqueuing (data safety).
     await upsert_chat_state(
-        db, bot_id=BOT_ID, chat_id=chat_id, state=state.state,
+        db, bot_id=BOT_ID, chat_id=chat_id, state=current_state,
         state_payload=payload, user_id=user_id,
         role=state.role, context_id=state.context_id,
     )
@@ -159,6 +178,62 @@ async def _handle_text(
     )
 
     await bot.send_message(chat_id=chat_id, text="⏳ Анализирую материал...")
+
+
+# ── Clarification questions state ─────────────────────────────────────────────
+
+async def _handle_clarification_answer(
+    bot: Bot, db: AsyncSession, text: str,
+    state: BotChatState, chat_id: int, user_id: int | None,
+) -> None:
+    """
+    Process one specialist answer in the clarification_questions state.
+
+    Records the answer, then either:
+    - sends the next question (if more remain), or
+    - enqueues interp_run with the full Q&A payload (if all answered).
+    """
+    payload = dict(state.state_payload or {})
+    questions: list = payload.get("questions", [])
+    question_index: int = payload.get("question_index", 0)
+    clarification_qa: list = payload.setdefault("clarification_qa", [])
+
+    current_q = questions[question_index] if question_index < len(questions) else ""
+    clarification_qa.append({"question": current_q, "answer": text})
+    question_index += 1
+    payload["question_index"] = question_index
+
+    if question_index < len(questions):
+        # More questions remain — persist and send the next one.
+        next_q = questions[question_index]
+        total = len(questions)
+        await upsert_chat_state(
+            db, bot_id=BOT_ID, chat_id=chat_id, state="clarification_questions",
+            state_payload=payload, user_id=user_id,
+            role=state.role, context_id=state.context_id,
+        )
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f"Вопрос {question_index + 1} из {total}:\n\n{next_q}",
+        )
+    else:
+        # All questions answered — persist and enqueue interpretation.
+        run_id = payload.get("run_id")
+        await upsert_chat_state(
+            db, bot_id=BOT_ID, chat_id=chat_id, state="clarification_questions",
+            state_payload=payload, user_id=user_id,
+            role=state.role, context_id=state.context_id,
+        )
+        await enqueue(
+            db, "interp_run", BOT_ID, chat_id,
+            payload={"state_payload": payload, "role": state.role or "specialist"},
+            user_id=user_id, context_id=state.context_id, run_id=run_id,
+        )
+        await bot.send_message(
+            chat_id=chat_id,
+            text="⏳ Формирую интерпретацию...",
+        )
+
 
 # ── Photo handling ────────────────────────────────────────────────────────────
 

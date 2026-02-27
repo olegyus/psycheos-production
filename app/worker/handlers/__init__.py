@@ -11,6 +11,7 @@ from app.worker.handlers.conceptualizator import (
 from app.worker.handlers.interpretator import (
     handle_interp_intake,
     handle_interp_photo,
+    handle_interp_questions,
     handle_interp_run,
 )
 from app.worker.handlers.pro import handle_pro_reference
@@ -26,6 +27,7 @@ REGISTRY: dict = {
     # Interpretator bot
     "interp_photo": handle_interp_photo,
     "interp_intake": handle_interp_intake,
+    "interp_questions": handle_interp_questions,
     "interp_run": handle_interp_run,
     # Conceptualizator bot
     "concept_hypothesis": handle_concept_hypothesis,
