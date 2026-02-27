@@ -7,10 +7,10 @@ PsycheOS Backend is a single FastAPI service that handles Telegram webhooks for 
 - **Framework**: FastAPI + async SQLAlchemy (asyncpg)
 - **Database**: PostgreSQL via Supabase (connection pooler in production)
 - **Telegram**: `python-telegram-bot` 21.x (webhook mode only, no polling)
-- **AI**: Anthropic Claude API ✅ интегрирован — Simulator, Conceptualizer, Interpreter используют `claude-sonnet-4-5-20250929`; Screen v2 — при генерации отчёта
+- **AI**: Anthropic Claude API ✅ интегрирован — Simulator, Conceptualizer, Interpreter используют `claude-sonnet-4-5-20250929`; Screen v2 — при генерации отчёта (3 Claude-вызова: structural_report + session_bridge + client_summary)
 - **Monitoring**: Sentry
 - **Deployment**: Railway (Procfile-based)
-- **Current phase**: Phase 6 **COMPLETE** — Screen UX/bug fixes ✅ + Interpreter Claude gaps filled ✅; next: Phase 7
+- **Current phase**: Phase 6 **COMPLETE** + Screen report enhancements ✅ (client_summary + DOCX bug fixes); next: Phase 7
 
 ---
 
@@ -50,9 +50,9 @@ psycheos-production/
 │   │   │   ├── engine.py        #   ScreeningEngine: vector aggregation, tension matrix, rigidity, confidence ✅
 │   │   │   ├── weight_matrix.py #   PHASE1_SCREENS (6) + PHASE2_TEMPLATES (20 nodes) with axis/layer weights ✅
 │   │   │   ├── screen_bank.py   #   get_phase1_screen / get_phase2_template / get_all_phase2_nodes ✅
-│   │   │   ├── prompts.py       #   5 Claude prompts (router/constructor/report/session_bridge/stop) + assemble_prompt() ✅
+│   │   │   ├── prompts.py       #   6 Claude prompts (router/constructor/report/client_report/session_bridge/stop) + assemble_prompt() ✅
 │   │   │   ├── orchestrator.py  #   ScreenOrchestrator: 3-phase flow, Claude routing, stop decision ✅
-│   │   │   └── report.py        #   generate_full_report / format_report_txt / generate_report_docx ✅
+│   │   │   └── report.py        #   generate_full_report / generate_client_summary / format_report_txt / generate_report_docx ✅
 │   │   └── simulator/           # Simulator service modules ✅
 │   │       ├── schemas.py       #   Pydantic v2: SessionData, FSMState, SpecialistProfile, TSIComponents, …
 │   │       ├── cases.py         #   BUILTIN_CASES (3 встроенных кейса)
@@ -79,8 +79,8 @@ psycheos-production/
 | Bot ID            | Role                  | Status       | Handler file      |
 |-------------------|-----------------------|--------------|-------------------|
 | `pro`             | Specialist management | Phase 2 done       | `webhooks/pro.py`             |
-| `screen`          | Client-facing         | **Phase 4 ✅ done** | `webhooks/screen.py`          |
-| `interpretator`   | AI diagnostic tool    | **Phase 4 ✅ done** | `webhooks/interpretator.py`  |
+| `screen`          | Client-facing         | **Phase 6+ ✅ done** | `webhooks/screen.py`         |
+| `interpretator`   | AI diagnostic tool    | **Phase 5 ✅ done** | `webhooks/interpretator.py`  |
 | `conceptualizator`| Conceptualization     | **Phase 4 ✅ done** | `webhooks/conceptualizator.py` |
 | `simulator`       | Simulation            | **Phase 4 ✅ done** | `webhooks/simulator.py`       |
 
@@ -177,6 +177,29 @@ POST /webhook/{bot_id}
 | `completed`         | Interpretation sent                 | Session closed; further messages rejected                     |
 
 Flow: `active` → specialist types material → `_run_intake` (Claude INTAKE prompt, may set `intake`) → `_run_material_check` (Claude MATERIAL_CHECK prompt) → if sufficient: `_run_interpretation`; else → `clarification_loop` (Claude CLARIFICATION_LOOP prompt, max 2 rounds) → `_run_interpretation` → `completed`.
+
+---
+
+## Screen v2 Report Pipeline
+
+`generate_full_report(state, claude_client)` выполняет 3 последовательных Claude-вызова:
+
+```
+Claude call 1 → structural_report   (REPORT_GENERATOR_PROMPT,  max_tokens=1500, model=sonnet)
+Claude call 2 → interview_protocol  (SESSION_BRIDGE_PROMPT,    max_tokens=1500, model=sonnet)
+Claude call 3 → client_summary      (CLIENT_REPORT_PROMPT,     max_tokens=500,  model=sonnet)
+```
+
+`report_json` содержит все три результата. `generate_report_docx` строит DOCX с секциями:
+1. Профиль осей регуляции (таблица)
+2. Доминирующие слои (таблица)
+3. Ключевые сочетания L×A
+4. Индекс гибкости
+5. Пояснение — `structural_report`, рендеренный через `_render_markdown_text()`
+6. Ориентиры для первой сессии — `interview_protocol`
+7. Профиль для клиента — `client_summary`, рендеренный через `_render_markdown_text()` (только если непустой)
+
+`_render_markdown_text(doc, text)` — inner-функция внутри `generate_report_docx`: строки `## ` → `_heading(level=3)` с удалением числового префикса `"N. "` / `"N) "`; остальные непустые строки → `_para()`.
 
 ---
 
@@ -352,9 +375,10 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 | 1     | Project skeleton, DB schema, webhook pipeline                                      | Done            |
 | 2     | Pro bot: invite-only registration, cases, admin panel                              | Done            |
 | 3     | Link tokens (passes), run_id, tool launcher in Pro, verify in tool bots            | **Done**        |
-| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **COMPLETE** ✅ (все 5 ботов мигрированы)                                       |
+| 4     | Screen/Interpretator/Conceptualizator/Simulator full logic                         | **COMPLETE** ✅ (все 5 ботов мигрированы) |
 | 5     | Interpreter Claude gaps: `_run_material_check` + `clarification_loop` FSM state + `clarifications_received` | **COMPLETE** ✅ |
 | 6     | Screen bot: bug fix `_notify_specialist` + `asked_nodes` dedup + UX (typing, phase transitions, Phase 1 progress) | **COMPLETE** ✅ |
+| 6+    | Screen report: `CLIENT_REPORT_PROMPT` + `generate_client_summary` + DOCX fixes (markdown render, max_tokens, client section) | **COMPLETE** ✅ |
 | 7     | Billing (Telegram Stars)                                                           | Planned         |
 
 ---
@@ -374,7 +398,7 @@ No authentication required. Used by Railway for healthchecks.
 | Бот              | Статус                    | Примечание                                                                                                    |
 |------------------|---------------------------|---------------------------------------------------------------------------------------------------------------|
 | Pro              | Требует v2                | Центральный хаб: регистрация, оплата, выход на остальные боты (tool-боты), ИИ-справочник по системе. Текущая версия не адаптирована под продакшн |
-| Screen           | ✅ Phase 6 DONE           | Steps 1–9 ✅ + bug fix `_notify_specialist` + `asked_nodes` dedup + UX (typing, phase transitions, Phase 1 progress "Вопрос N из 6") |
+| Screen           | ✅ Phase 6+ DONE          | Phase 6 ✅ + report enhancements ✅: CLIENT_REPORT_PROMPT, generate_client_summary, DOCX markdown render, client section in DOCX, max_tokens=1500 |
 | Interpreter      | ✅ Phase 5 DONE           | `app/webhooks/interpretator.py`; все Claude-гэпы закрыты: material_check + clarification_loop + clarifications_received |
 | Conceptualizer   | ✅ Мигрирован (Phase 4)   | `app/webhooks/conceptualizator.py` + `app/services/conceptualizer/`; оригинал: `./psycheos-conceptualizer`  |
 | Simulator        | ✅ Мигрирован (Phase 4)   | `app/webhooks/simulator.py` + `app/services/simulator/`; оригинал: `./psycheos-simulator`                   |
@@ -406,6 +430,14 @@ No authentication required. Used by Railway for healthchecks.
    - ✅ Fix 3: `send_chat_action("typing")` + `⏳ Анализирую...` перед генерацией отчёта
    - ✅ Fix 4: Сообщения при переходе между фазами (phase1→phase2, phase2→phase3)
    - ✅ Fix 5: `_show_multi_select(header=...)` — "📋 Вопрос N из 6" в Phase 1
+7. ✅ Screen report — client summary + DOCX fixes (Phase 6+):
+   - ✅ `CLIENT_REPORT_PROMPT` добавлен в `prompts.py` как Prompt 5; `PHASE2_STOP_PROMPT` переименован в Prompt 6; добавлен в `_PROMPT_REGISTRY["client_report"]`
+   - ✅ `generate_client_summary(state, claude_client) → str` — 3-й Claude-вызов в `generate_full_report`; контекст: `StructuralSummary` + `Confidence`; max_tokens=500; fallback → `""`
+   - ✅ `report_json["client_summary"]` — новый ключ, обратно совместим (старые отчёты без ключа не ломаются)
+   - ✅ Bug fix: `max_tokens` для `structural_report` 800 → 1500 (русский текст ~1.5–2 токена/слово)
+   - ✅ Bug fix: `_render_markdown_text(doc, text)` — inner-функция в `generate_report_docx`; парсит `##`-заголовки → `_heading(level=3)` + body → `_para()`; числовые префиксы `"N. "` / `"N) "` удаляются
+   - ✅ Bug fix: `_para(doc, structural)` заменён на `_render_markdown_text(doc, structural)` в секции «Пояснение»
+   - ✅ Секция «Профиль для клиента» добавлена в DOCX перед `buf.save()`; использует `_render_markdown_text`; пропускается если `client_summary` пустой
 
 ---
 
@@ -437,3 +469,8 @@ No authentication required. Used by Railway for healthchecks.
 - **Screen `asked_nodes` deduplication (Phase 6):** каждый entry в `response_history` дополнен полями `node` (str) и `phase` (int). ScreeningEngine игнорирует лишние ключи (читает только `axis_weights`/`layer_weights` через `.get()`). `_asked_nodes(state)` извлекает set узлов из response_history где phase in (2, 3). `_fallback_node(state, exclude)` итерирует сначала ambiguity_zones, затем all_nodes, пропуская exclude; при исчерпании — wrap к первому узлу. Phase 2/3 routing принимает Claude-предложение только если оно не в exclude.
 - **Screen `_show_multi_select` header (Phase 6):** опциональный параметр `header: str | None = None`; если задан — prepend к тексту вопроса как `"{header}\n\n{question}"`. В Phase 1 оба call-site передают `f"📋 Вопрос {screen_index + 1} из 6"`. Phase 2/3 передают `None` (переменная длина фаз).
 - **Screen `_notify_specialist` fix (Phase 6):** функция принимает `assessment_id_str` + `context_id`; загружает `ScreeningAssessment` по UUID, берёт `assessment.specialist_user_id` (BigInteger Telegram ID) для `chat_id` в Pro-боте. `Context` загружается отдельно только для получения `client_ref` (label). `Context.specialist_user_id` — UUID FK, НЕ Telegram ID.
+- **Screen report `CLIENT_REPORT_PROMPT` (Phase 6+):** Prompt 5 в `prompts.py`; запрет использовать axis/layer/score-терминологию; 5 фиксированных секций на русском языке; обращение на "вы"; max 350 слов. Ключ `"client_report"` в `_PROMPT_REGISTRY`. Промпт содержит явные if-then правила трансляции: central_axis, vertical_integration, strategy_repetition, adaptive_depth, Confidence < 0.85.
+- **Screen report `generate_client_summary` (Phase 6+):** async, принимает `state` + `claude_client`; контекст = `StructuralSummary` (из `build_structural_summary(state)`) + `Confidence`; `max_tokens=500`; при ошибке возвращает `""` (не ломает пайплайн). Вызывается как 3-й Claude-вызов внутри `generate_full_report` после session bridge.
+- **Screen report `max_tokens` для structural_report (Phase 6+):** 800 → 1500. Русский текст ≈ 1.5–2 токена/слово; 600-слов отчёт требует ~1200 токенов.
+- **Screen report DOCX `_render_markdown_text` (Phase 6+):** inner-функция внутри `generate_report_docx`, имеет доступ к `_heading` и `_para` (замыкания). Парсинг построчно: строка `## …` → `_heading(level=3)` + strip числового префикса `"N. "` / `"N) "`; пустая строка → skip; остальное → `_para()`. Используется для `structural_report` (секция «Пояснение») и `client_summary` (секция «Профиль для клиента»).
+- **Screen report DOCX секция «Профиль для клиента» (Phase 6+):** добавляется последней перед `buf.save()`; пропускается (`if client_summary`) если строка пустая — backward-compatible с отчётами без client_summary в report_json.
