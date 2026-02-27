@@ -79,6 +79,30 @@ def _rigidity_label(total: float) -> str:
 # 1. generate_full_report
 # ---------------------------------------------------------------------------
 
+def build_structural_summary(data: dict) -> dict:
+    """Build deterministic structural signals for the LLM layer.
+
+    Requires state to contain vertical_profile, horizontal_profile,
+    phase_depth (injected by orchestrator._generate_report), and rigidity.
+
+    Returns:
+        {
+            "central_axis": str | None,
+            "vertical_integration": bool,
+            "horizontal_profile": dict,
+            "strategy_repetition": float,
+            "adaptive_depth": bool,
+        }
+    """
+    return {
+        "central_axis": data.get("vertical_profile", {}).get("axis"),
+        "vertical_integration": data.get("vertical_profile", {}).get("is_vertical_integrated", False),
+        "horizontal_profile": data.get("horizontal_profile", {}),
+        "strategy_repetition": data.get("rigidity", {}).get("strategy_repetition", 0.0),
+        "adaptive_depth": data.get("phase_depth", {}).get("phase3", 0) > 0,
+    }
+
+
 async def generate_full_report(state: dict, claude_client) -> dict:
     """Build the complete report for a finished screening assessment.
 
@@ -99,6 +123,7 @@ async def generate_full_report(state: dict, claude_client) -> dict:
     )
 
     # ---- 1. Structural report (Claude sonnet) ----------------------------
+    structural_summary = build_structural_summary(state)
     report_context = {
         "AxisVector": state.get("axis_vector", {}),
         "LayerVector": state.get("layer_vector", {}),
@@ -106,6 +131,7 @@ async def generate_full_report(state: dict, claude_client) -> dict:
         "RigidityIndex": state.get("rigidity", {}),
         "DominantCells": state.get("dominant_cells", []),
         "Confidence": state.get("confidence", 0.0),
+        "StructuralSummary": structural_summary,
     }
     report_user = assemble_prompt("report", report_context)
     structural_report = await _call_claude(
@@ -125,6 +151,7 @@ async def generate_full_report(state: dict, claude_client) -> dict:
         "DominantCells": state.get("dominant_cells", []),
         "RigidityIndex": state.get("rigidity", {}),
         "Confidence": state.get("confidence", 0.0),
+        "StructuralSummary": structural_summary,
     }
     bridge_user = assemble_prompt("session_bridge", bridge_context)
     bridge_raw = await _call_claude(
@@ -159,6 +186,9 @@ async def generate_full_report(state: dict, claude_client) -> dict:
         },
         "structural_report": structural_report,
         "interview_protocol": interview_protocol,
+        "vertical_profile": state.get("vertical_profile", {}),
+        "horizontal_profile": state.get("horizontal_profile", {}),
+        "phase_depth": state.get("phase_depth", {}),
     }
 
     report_text = format_report_txt(report_json)

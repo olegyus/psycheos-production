@@ -22,7 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.screening_assessment import ScreeningAssessment
 from app.services.screen import screen_bank
-from app.services.screen.engine import ScreeningEngine
+from app.services.screen.engine import (
+    ScreeningEngine,
+    detect_vertical_dominance,
+    analyze_horizontal_coherence,
+)
 from app.services.screen.prompts import (
     PHASE2_ROUTER_PROMPT,
     PHASE2_STOP_PROMPT,
@@ -399,6 +403,19 @@ class ScreenOrchestrator:
         from app.services.screen import report as report_module
 
         state = await self.get_or_create_session_state(assessment_id)
+
+        # Extend state with structural signals consumed by report generator
+        state["vertical_profile"] = detect_vertical_dominance(
+            state.get("axis_vector", {}), state.get("dominant_cells", [])
+        )
+        state["horizontal_profile"] = analyze_horizontal_coherence(
+            state.get("tension_matrix", {})
+        )
+        state["phase_depth"] = {
+            "phase2": state.get("phase2_questions", 0),
+            "phase3": state.get("phase3_questions", 0),
+        }
+
         result = await report_module.generate_full_report(state, self.client)
 
         await self.db.execute(
