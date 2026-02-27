@@ -107,14 +107,18 @@ async def handle_interp_photo(
         role=p.get("role", "specialist"), context_id=job.context_id,
     )
 
+    # Enqueue questions generation — description is stored internally, not shown to user.
+    await enqueue(
+        db, "interp_questions", BOT_ID, job.chat_id,
+        payload={"state_payload": state_payload, "role": p.get("role", "specialist")},
+        user_id=job.user_id, context_id=job.context_id, run_id=job.run_id,
+        priority=3,
+    )
     await enqueue_message(
         db, BOT_ID, job.chat_id, "send_message",
         {
             "chat_id": job.chat_id,
-            "text": (
-                f"✓ Рисунок проанализирован:\n\n{description}\n\n"
-                "Добавьте контекст от себя или напишите «продолжить» для интерпретации."
-            ),
+            "text": "✓ Рисунок проанализирован. Подготавливаю уточняющие вопросы...",
         },
         job_id=job.job_id, seq=0,
     )
@@ -167,7 +171,62 @@ async def handle_interp_intake(
             job_id=job.job_id, seq=0,
         )
     else:
-        # Material accepted — queue full interpretation
+        # Material accepted — queue clarifying questions generation
+        await enqueue(
+            db, "interp_questions", BOT_ID, job.chat_id,
+            payload={"state_payload": state_payload, "role": p.get("role", "specialist")},
+            user_id=job.user_id, context_id=job.context_id, run_id=job.run_id,
+            priority=3,
+        )
+        await enqueue_message(
+            db, BOT_ID, job.chat_id, "send_message",
+            {"chat_id": job.chat_id, "text": "⏳ Подготавливаю уточняющие вопросы..."},
+            job_id=job.job_id, seq=0,
+        )
+
+
+async def handle_interp_questions(
+    job: Job, db: AsyncSession, bots: dict[str, Bot],
+) -> None:
+    """
+    Generate 3-4 clarifying questions from the accumulated symbolic material.
+
+    Saves the questions list to state_payload, transitions FSM to
+    'clarification_questions', and sends the first question to the specialist.
+    If question generation fails entirely, falls back to enqueueing interp_run
+    directly so the session is never silently stuck.
+    """
+    p = job.payload
+    state_payload = dict(p["state_payload"])
+
+    run_id_str = str(job.run_id).replace("-", "")[:8] if job.run_id else ""
+    session_id = f"int_{job.chat_id}_{run_id_str}" if run_id_str else f"int_{job.chat_id}"
+
+    context = {
+        "session_id": session_id,
+        "mode": state_payload.get("mode", "STANDARD"),
+        "iteration_count": state_payload.get("iteration_count", 0),
+        "max_iterations": _MAX_CLARIFICATION_ITERATIONS,
+        "material_type": state_payload.get("material_type", "unknown"),
+        "completeness": state_payload.get("completeness", "unknown"),
+    }
+    system_prompt = assemble_prompt("QUESTIONS_GENERATION", context)
+    material_text = "\n\n".join(
+        m["content"] for m in state_payload.get("accumulated_material", [])
+    )
+
+    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    resp = await client.messages.create(
+        model=_ANTHROPIC_MODEL,
+        max_tokens=800,
+        system=system_prompt,
+        messages=[{"role": "user", "content": f"Символический материал:\n{material_text}"}],
+    )
+    questions = _extract_questions(resp.content[0].text)
+
+    if not questions:
+        # Fallback: if no questions generated, proceed directly to interpretation
+        logger.warning("[worker/interp] questions generation returned empty — falling back to interp_run")
         await enqueue(
             db, "interp_run", BOT_ID, job.chat_id,
             payload={"state_payload": state_payload, "role": p.get("role", "specialist")},
@@ -179,6 +238,30 @@ async def handle_interp_intake(
             {"chat_id": job.chat_id, "text": "⏳ Формирую интерпретацию..."},
             job_id=job.job_id, seq=0,
         )
+        return
+
+    state_payload["questions"] = questions
+    state_payload["question_index"] = 0
+    state_payload.setdefault("clarification_qa", [])
+
+    await upsert_chat_state(
+        db, bot_id=BOT_ID, chat_id=job.chat_id, state="clarification_questions",
+        state_payload=state_payload, user_id=job.user_id,
+        role=p.get("role", "specialist"), context_id=job.context_id,
+    )
+
+    total = len(questions)
+    await enqueue_message(
+        db, BOT_ID, job.chat_id, "send_message",
+        {
+            "chat_id": job.chat_id,
+            "text": (
+                f"🔍 Перед интерпретацией — несколько уточняющих вопросов "
+                f"(1 из {total}):\n\n{questions[0]}"
+            ),
+        },
+        job_id=job.job_id, seq=0,
+    )
 
 
 async def handle_interp_run(
@@ -209,8 +292,24 @@ async def handle_interp_run(
     material_text = "\n\n".join(
         m["content"] for m in state_payload.get("accumulated_material", [])
     )
+
+    # Build Q&A block from structured clarification_qa (new flow) or
+    # plain clarifications_received list (legacy intake/clarification_loop flow).
+    clarification_qa = state_payload.get("clarification_qa", [])
     clarifications = state_payload.get("clarifications_received", [])
-    if clarifications:
+
+    if clarification_qa:
+        qa_lines = [
+            f"В: {item['question']}\nО: {item['answer']}"
+            for item in clarification_qa
+        ]
+        user_content = (
+            f"Символический материал:\n{material_text}\n\n"
+            f"Уточняющие вопросы и ответы специалиста:\n\n"
+            + "\n\n".join(qa_lines)
+            + "\n\nСоздайте структурированную интерпретацию в формате JSON."
+        )
+    elif clarifications:
         clar_block = "\n".join(f"- {c}" for c in clarifications)
         user_content = (
             f"Символический материал:\n{material_text}\n\n"
@@ -379,6 +478,23 @@ def _extract_message(response_text: str) -> str:
         return response_text
     except Exception:
         return response_text
+
+
+def _extract_questions(response_text: str) -> list[str]:
+    """Extract the questions list from Claude's QUESTIONS_GENERATION response."""
+    try:
+        if "```json" in response_text:
+            start = response_text.find("```json") + 7
+            json_str = response_text[start:response_text.find("```", start)].strip()
+        elif "{" in response_text:
+            json_str = response_text[response_text.find("{"):response_text.rfind("}") + 1]
+        else:
+            return []
+        data = json.loads(json_str)
+        questions = data.get("questions", [])
+        return [str(q).strip() for q in questions if q][:4]
+    except Exception:
+        return []
 
 
 def _extract_json(response_text: str) -> dict | None:
