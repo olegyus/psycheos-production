@@ -163,7 +163,7 @@ async def generate_full_report(state: dict, claude_client) -> dict:
         system=REPORT_GENERATOR_PROMPT,
         user_content=report_user,
         model=_SONNET,
-        max_tokens=800,
+        max_tokens=1500,
     )
     if not structural_report:
         structural_report = "(Отчёт недоступен — ошибка генерации)"
@@ -334,6 +334,23 @@ async def generate_report_docx(report_json: dict) -> bytes:
         run = p.add_run(text)
         _set_font(run, size=size)
 
+    def _render_markdown_text(doc, text: str) -> None:
+        """Parse simple markdown (## headings + body paragraphs) into DOCX elements."""
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("## "):
+                heading_text = stripped[3:].strip()
+                # Strip leading "N. " or "N) " numbering
+                if len(heading_text) > 2 and heading_text[0].isdigit() and heading_text[1] in ".)":
+                    heading_text = heading_text[2:].strip()
+                elif len(heading_text) > 3 and heading_text[:2].isdigit() and heading_text[2] in ".)":
+                    heading_text = heading_text[3:].strip()
+                _heading(doc, heading_text, level=3)
+            else:
+                _para(doc, stripped)
+
     axis_v = report_json.get("axis_vector", {})
     layer_v = report_json.get("layer_vector", {})
     dominant = report_json.get("dominant_cells", [])
@@ -419,7 +436,7 @@ async def generate_report_docx(report_json: dict) -> bytes:
 
     # Structural report
     _heading(doc, "Пояснение")
-    _para(doc, structural)
+    _render_markdown_text(doc, structural)
 
     doc.add_paragraph()
 
@@ -438,6 +455,13 @@ async def generate_report_docx(report_json: dict) -> bytes:
                     p = doc.add_paragraph(style="List Bullet")
                     run = p.add_run(q)
                     _set_font(run)
+
+    # Client-facing summary
+    client_summary = report_json.get("client_summary", "")
+    if client_summary:
+        doc.add_paragraph()
+        _heading(doc, "Профиль для клиента")
+        _render_markdown_text(doc, client_summary)
 
     buf = io.BytesIO()
     doc.save(buf)
