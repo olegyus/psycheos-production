@@ -139,7 +139,7 @@ async def generate_full_report(state: dict, claude_client) -> dict:
         system=REPORT_GENERATOR_PROMPT,
         user_content=report_user,
         model=_SONNET,
-        max_tokens=2000,
+        max_tokens=800,
     )
     if not structural_report:
         structural_report = "(Отчёт недоступен — ошибка генерации)"
