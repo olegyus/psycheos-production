@@ -103,11 +103,35 @@ def build_structural_summary(data: dict) -> dict:
     }
 
 
+async def generate_client_summary(state: dict, claude_client) -> str:
+    """Generate a client-facing non-technical summary.
+
+    Uses the pre-computed StructuralSummary signals (already in state when
+    called from generate_full_report). Returns plain text in Russian or an
+    empty string on failure.
+    """
+    from app.services.screen.prompts import CLIENT_REPORT_PROMPT, assemble_prompt
+
+    structural_summary = build_structural_summary(state)
+    context = {
+        "StructuralSummary": structural_summary,
+        "Confidence": state.get("confidence", 0.0),
+    }
+    user_content = assemble_prompt("client_report", context)
+    result = await _call_claude(
+        claude_client,
+        system=CLIENT_REPORT_PROMPT,
+        user_content=user_content,
+        max_tokens=500,
+    )
+    return result or ""
+
+
 async def generate_full_report(state: dict, claude_client) -> dict:
     """Build the complete report for a finished screening assessment.
 
-    Calls Claude twice (report generator + session bridge), assembles
-    report_json, and produces report_text via format_report_txt().
+    Calls Claude three times (report generator + session bridge + client summary),
+    assembles report_json, and produces report_text via format_report_txt().
 
     Args:
         state:         Current assessment state dict from the orchestrator.
@@ -169,7 +193,10 @@ async def generate_full_report(state: dict, claude_client) -> dict:
             logger.warning("[screen] Session bridge JSON parse failed; leaving empty")
             interview_protocol = {"axis_verification": [], "layer_exploration": [], "functional_context": []}
 
-    # ---- 3. Assemble report_json -----------------------------------------
+    # ---- 3. Client-facing summary (Claude sonnet) ------------------------
+    client_summary = await generate_client_summary(state, claude_client)
+
+    # ---- 4. Assemble report_json -----------------------------------------
     report_json = {
         "assessment_id": state.get("assessment_id", ""),
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -185,6 +212,7 @@ async def generate_full_report(state: dict, claude_client) -> dict:
             "phase3_questions": state.get("phase3_questions", 0),
         },
         "structural_report": structural_report,
+        "client_summary": client_summary,
         "interview_protocol": interview_protocol,
         "vertical_profile": state.get("vertical_profile", {}),
         "horizontal_profile": state.get("horizontal_profile", {}),

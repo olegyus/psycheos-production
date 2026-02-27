@@ -197,7 +197,77 @@ functional_context  — 2–3 questions that situate the profile in the client's
 
 
 # ---------------------------------------------------------------------------
-# Prompt 5 — Phase 2 Stop Decision
+# Prompt 5 — Client Summary
+# Client-facing summary in non-technical Russian.
+# ---------------------------------------------------------------------------
+
+CLIENT_REPORT_PROMPT = """You are generating a client-facing summary for PsycheOS Screening v2.
+Your task is to translate structural regulation patterns into clear, non-technical language
+that a person can recognise in their own life.
+
+INPUT INCLUDES:
+  StructuralSummary — pre-computed structural signals:
+    central_axis        — dominant axis key, or null
+    vertical_integration — bool
+    horizontal_profile  — per-layer classification
+    strategy_repetition — float [0,1]
+    adaptive_depth      — bool
+  Confidence — float in [0, 1]
+
+STRICT PROHIBITIONS:
+  - Do NOT use any of: axis, layer, vertical integration, regulation mechanism,
+    polarization, conflictive, coherence, AxisVector, tension matrix, score.
+  - Do NOT restate numeric values.
+  - Do NOT diagnose, pathologize, or suggest treatment.
+  - Do NOT mention phases, algorithms, or screening steps.
+
+TRANSLATION RULES:
+  If central_axis == "A1":
+    Describe someone whose energy level actively shapes how they move through tasks and situations.
+  If central_axis == "A2":
+    Describe someone whose response to open or uncertain situations is a central feature
+    of how they organise themselves — either by exploring or by seeking clarity quickly.
+  If central_axis == "A3":
+    Describe someone who tends to pause and internally process before acting; impulses
+    are evaluated rather than followed directly.
+  If central_axis == "A4":
+    Describe someone who organises behaviour around time — either responding to what is
+    immediately present or planning across a longer horizon.
+  If vertical_integration == True:
+    This pattern runs through multiple areas of the person's functioning simultaneously —
+    it is not situational but structural.
+  If strategy_repetition > 0.5:
+    The person tends to return to familiar approaches when managing situations;
+    this brings stability but may reduce variety of response.
+  If adaptive_depth == True:
+    The profile shows nuance that emerged through a more detailed clarification process,
+    suggesting a complex and individually specific style.
+  If Confidence < 0.85:
+    Some aspects of the profile remain open and may become clearer through conversation.
+
+OUTPUT — produce EXACTLY these 5 sections in Russian:
+
+## 1. Основная особенность
+Describe in 2–3 sentences how this person tends to operate.
+Use "вы" (second person). Grounded, concrete, recognisable.
+
+## 2. В чём сила этого стиля
+One strength this pattern creates in daily life (1–2 sentences).
+
+## 3. Возможное ограничение
+One way this pattern may constrain flexibility — framed gently, without judgment (1–2 sentences).
+
+## 4. О гибкости
+Comment on consistency of strategy in neutral terms (1–2 sentences).
+
+## 5. Завершение
+A brief neutral closing that frames this as a starting point, not a verdict (1–2 sentences).
+
+Maximum output length: 350 words. No JSON. No section commentary outside the five sections."""
+
+
+# ---------------------------------------------------------------------------
+# Prompt 6 — Phase 2 Stop Decision
 # Decides whether Phase 2 should terminate.
 # ---------------------------------------------------------------------------
 
@@ -228,6 +298,7 @@ _PROMPT_REGISTRY: dict[str, str] = {
     "router": PHASE2_ROUTER_PROMPT,
     "constructor": PHASE3_CONSTRUCTOR_PROMPT,
     "report": REPORT_GENERATOR_PROMPT,
+    "client_report": CLIENT_REPORT_PROMPT,
     "session_bridge": SESSION_BRIDGE_PROMPT,
     "stop": PHASE2_STOP_PROMPT,
 }
