@@ -4,7 +4,7 @@ Stateless computations: aggregation, tanh normalization, tension matrix,
 rigidity index, confidence score, ambiguity zones, dominant cells.
 """
 import math
-from collections import Counter
+from collections import Counter, defaultdict
 
 AXES = ["A1", "A2", "A3", "A4"]
 LAYERS = ["L0", "L1", "L2", "L3", "L4"]
@@ -13,6 +13,64 @@ _AMBIGUITY_THRESHOLD = 0.1        # |M[Lk,Aj]| below this → ambiguous cell
 _POLARIZATION_THRESHOLD = 0.7     # |axis_score| above this → polarized
 _LOW_VARIANCE_STD_REF = 0.3       # std reference for low-variance normalization
 _STABILITY_STD_REF = 0.5          # std reference for confidence stability
+
+
+def detect_vertical_dominance(axis_vector: dict, dominant_cells: list) -> dict:
+    """Detect structural dominance and vertical integration across layers.
+
+    Returns:
+        {
+            "axis": str | None,          — axis key with highest |score|, or None
+            "is_dominant": bool,         — True if |score| >= 0.7
+            "is_vertical_integrated": bool — True if dominant axis appears in >=3 dominant cells
+        }
+    """
+    dominant_axis = None
+    is_dominant = False
+    is_vertical_integrated = False
+
+    if axis_vector:
+        max_axis = max(axis_vector.items(), key=lambda x: abs(x[1]))
+        axis_name, axis_value = max_axis
+        if abs(axis_value) >= 0.7:
+            dominant_axis = axis_name
+            is_dominant = True
+            count = sum(1 for cell in dominant_cells if axis_name in cell)
+            if count >= 3:
+                is_vertical_integrated = True
+
+    return {
+        "axis": dominant_axis,
+        "is_dominant": is_dominant,
+        "is_vertical_integrated": is_vertical_integrated,
+    }
+
+
+def analyze_horizontal_coherence(tension_matrix: dict) -> dict:
+    """Evaluate horizontal organization per layer.
+
+    Returns a dict mapping each layer key to one of:
+        "polarized"   — single strong signal (|max| >= 0.7)
+        "conflictive" — strong opposing signals (both > 0.6 and < -0.6)
+        "coherent"    — no strong signals
+    """
+    layer_values: dict[str, list[float]] = defaultdict(list)
+    for key, value in tension_matrix.items():
+        layer, _ = key.split("_")
+        layer_values[layer].append(value)
+
+    result = {}
+    for layer, values in layer_values.items():
+        max_val = max(values, key=lambda x: abs(x))
+        strong_positive = any(v > 0.6 for v in values)
+        strong_negative = any(v < -0.6 for v in values)
+        if strong_positive and strong_negative:
+            result[layer] = "conflictive"
+        elif abs(max_val) >= 0.7:
+            result[layer] = "polarized"
+        else:
+            result[layer] = "coherent"
+    return result
 
 
 class ScreeningEngine:

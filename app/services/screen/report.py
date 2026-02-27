@@ -79,11 +79,59 @@ def _rigidity_label(total: float) -> str:
 # 1. generate_full_report
 # ---------------------------------------------------------------------------
 
+def build_structural_summary(data: dict) -> dict:
+    """Build deterministic structural signals for the LLM layer.
+
+    Requires state to contain vertical_profile, horizontal_profile,
+    phase_depth (injected by orchestrator._generate_report), and rigidity.
+
+    Returns:
+        {
+            "central_axis": str | None,
+            "vertical_integration": bool,
+            "horizontal_profile": dict,
+            "strategy_repetition": float,
+            "adaptive_depth": bool,
+        }
+    """
+    return {
+        "central_axis": data.get("vertical_profile", {}).get("axis"),
+        "vertical_integration": data.get("vertical_profile", {}).get("is_vertical_integrated", False),
+        "horizontal_profile": data.get("horizontal_profile", {}),
+        "strategy_repetition": data.get("rigidity", {}).get("strategy_repetition", 0.0),
+        "adaptive_depth": data.get("phase_depth", {}).get("phase3", 0) > 0,
+    }
+
+
+async def generate_client_summary(state: dict, claude_client) -> str:
+    """Generate a client-facing non-technical summary.
+
+    Uses the pre-computed StructuralSummary signals (already in state when
+    called from generate_full_report). Returns plain text in Russian or an
+    empty string on failure.
+    """
+    from app.services.screen.prompts import CLIENT_REPORT_PROMPT, assemble_prompt
+
+    structural_summary = build_structural_summary(state)
+    context = {
+        "StructuralSummary": structural_summary,
+        "Confidence": state.get("confidence", 0.0),
+    }
+    user_content = assemble_prompt("client_report", context)
+    result = await _call_claude(
+        claude_client,
+        system=CLIENT_REPORT_PROMPT,
+        user_content=user_content,
+        max_tokens=500,
+    )
+    return result or ""
+
+
 async def generate_full_report(state: dict, claude_client) -> dict:
     """Build the complete report for a finished screening assessment.
 
-    Calls Claude twice (report generator + session bridge), assembles
-    report_json, and produces report_text via format_report_txt().
+    Calls Claude three times (report generator + session bridge + client summary),
+    assembles report_json, and produces report_text via format_report_txt().
 
     Args:
         state:         Current assessment state dict from the orchestrator.
@@ -99,6 +147,7 @@ async def generate_full_report(state: dict, claude_client) -> dict:
     )
 
     # ---- 1. Structural report (Claude sonnet) ----------------------------
+    structural_summary = build_structural_summary(state)
     report_context = {
         "AxisVector": state.get("axis_vector", {}),
         "LayerVector": state.get("layer_vector", {}),
@@ -106,6 +155,7 @@ async def generate_full_report(state: dict, claude_client) -> dict:
         "RigidityIndex": state.get("rigidity", {}),
         "DominantCells": state.get("dominant_cells", []),
         "Confidence": state.get("confidence", 0.0),
+        "StructuralSummary": structural_summary,
     }
     report_user = assemble_prompt("report", report_context)
     structural_report = await _call_claude(
@@ -113,7 +163,7 @@ async def generate_full_report(state: dict, claude_client) -> dict:
         system=REPORT_GENERATOR_PROMPT,
         user_content=report_user,
         model=_SONNET,
-        max_tokens=2000,
+        max_tokens=800,
     )
     if not structural_report:
         structural_report = "(Отчёт недоступен — ошибка генерации)"
@@ -125,6 +175,7 @@ async def generate_full_report(state: dict, claude_client) -> dict:
         "DominantCells": state.get("dominant_cells", []),
         "RigidityIndex": state.get("rigidity", {}),
         "Confidence": state.get("confidence", 0.0),
+        "StructuralSummary": structural_summary,
     }
     bridge_user = assemble_prompt("session_bridge", bridge_context)
     bridge_raw = await _call_claude(
@@ -142,7 +193,10 @@ async def generate_full_report(state: dict, claude_client) -> dict:
             logger.warning("[screen] Session bridge JSON parse failed; leaving empty")
             interview_protocol = {"axis_verification": [], "layer_exploration": [], "functional_context": []}
 
-    # ---- 3. Assemble report_json -----------------------------------------
+    # ---- 3. Client-facing summary (Claude sonnet) ------------------------
+    client_summary = await generate_client_summary(state, claude_client)
+
+    # ---- 4. Assemble report_json -----------------------------------------
     report_json = {
         "assessment_id": state.get("assessment_id", ""),
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -158,7 +212,11 @@ async def generate_full_report(state: dict, claude_client) -> dict:
             "phase3_questions": state.get("phase3_questions", 0),
         },
         "structural_report": structural_report,
+        "client_summary": client_summary,
         "interview_protocol": interview_protocol,
+        "vertical_profile": state.get("vertical_profile", {}),
+        "horizontal_profile": state.get("horizontal_profile", {}),
+        "phase_depth": state.get("phase_depth", {}),
     }
 
     report_text = format_report_txt(report_json)
