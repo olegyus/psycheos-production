@@ -273,6 +273,7 @@ TERMINAL_JOB_TYPES: frozenset[str] = frozenset({
     "concept_output",      # Conceptualizator — 3-layer output step
     "sim_launch",          # Simulator — full session launch
     "sim_launch_custom",   # Simulator — custom launch (may lack run_id; safe to skip)
+    "screen_report",       # Screen — report generation (terminal step for Screen sessions)
     # sim_report intentionally excluded — billing is per-launch, report generation is included
 })
 

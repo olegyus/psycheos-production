@@ -225,7 +225,7 @@ async def _start_session(
         return
 
     payload = {
-        "run_id": str(token.run_id),
+        "run_id": str(token.jti),   # jti = billing key (matches reserve_stars in pro.py)
         "setup_step": "mode",
     }
     await upsert_chat_state(
