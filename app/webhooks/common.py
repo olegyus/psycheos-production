@@ -26,6 +26,13 @@ def verify_secret(request: Request, expected_secret: str) -> None:
     """
     token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
     if token != expected_secret:
+        logger.warning(
+            "Webhook auth failed at %s: header_present=%s, expected_present=%s. "
+            "Re-run set_webhooks.py to sync the secret with Telegram.",
+            request.url.path,
+            bool(token),
+            bool(expected_secret),
+        )
         raise HTTPException(status_code=403, detail="Invalid webhook secret")
 
 
