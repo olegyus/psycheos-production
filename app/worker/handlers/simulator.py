@@ -66,6 +66,106 @@ _MAX_SESSION_HISTORY = 50
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
+async def handle_sim_turn(
+    job: Job, db: AsyncSession, bots: dict[str, Bot],
+) -> None:
+    """Process one specialist message during an active simulation session.
+
+    job.payload keys:
+      text          str   — specialist's message text
+      state_payload dict  — current state_payload (must contain 'session')
+      role          str   — "specialist"
+    """
+    p = job.payload
+    text: str = p["text"]
+    state_payload = dict(p["state_payload"])
+
+    if "session" not in state_payload:
+        await enqueue_message(
+            db, BOT_ID, job.chat_id, "send_message",
+            {"chat_id": job.chat_id, "text": "❌ Данные сессии не найдены. Запустите через /start."},
+            job_id=job.job_id, seq=0,
+        )
+        return
+
+    session_data = SessionData.model_validate(state_payload["session"])
+    system_prompt = _get_system_prompt(state_payload, session_data)
+
+    session_data.messages.append({"role": "user", "content": text})
+    if len(session_data.messages) > _MAX_SESSION_HISTORY:
+        session_data.messages = (
+            session_data.messages[:1]
+            + session_data.messages[-(_MAX_SESSION_HISTORY - 1):]
+        )
+
+    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    try:
+        resp = await client.messages.create(
+            model=_ANTHROPIC_MODEL,
+            max_tokens=2048,
+            system=system_prompt,
+            messages=session_data.messages,
+        )
+        claude_response = resp.content[0].text
+    except Exception:
+        logger.exception("[worker/sim] Claude error in sim_turn chat=%s", job.chat_id)
+        session_data.messages.pop()
+        new_payload = {**state_payload, "session": session_data.model_dump(mode="json")}
+        await upsert_chat_state(
+            db, bot_id=BOT_ID, chat_id=job.chat_id, state="active",
+            state_payload=new_payload, user_id=job.user_id,
+            context_id=job.context_id,
+        )
+        await enqueue_message(
+            db, BOT_ID, job.chat_id, "send_message",
+            {"chat_id": job.chat_id, "text": "❌ Ошибка при обращении к Claude. Попробуйте ещё раз."},
+            job_id=job.job_id, seq=0,
+        )
+        return
+
+    session_data.messages.append({"role": "assistant", "content": claude_response})
+    parsed = parse_claude_response(claude_response)
+    if parsed.signal:
+        session_data.signal_log.append(parsed.signal)
+    if parsed.fsm_state:
+        session_data.fsm_log.append(parsed.fsm_state)
+
+    replica_id = len(session_data.iteration_log) + 1
+    iteration = build_iteration_log(parsed=parsed, replica_id=replica_id, specialist_input=text)
+    session_data.iteration_log.append(iteration)
+
+    new_payload = {**state_payload, "session": session_data.model_dump(mode="json")}
+    await upsert_chat_state(
+        db, bot_id=BOT_ID, chat_id=job.chat_id, state="active",
+        state_payload=new_payload, user_id=job.user_id,
+        context_id=job.context_id,
+    )
+
+    formatted = format_for_telegram(parsed)
+    seq = 0
+    if len(formatted) > 4000:
+        client_msg = f"🗣 <b>Клиент:</b>\n{_escape_html(parsed.client_text)}"
+        await enqueue_message(
+            db, BOT_ID, job.chat_id, "send_message",
+            {"chat_id": job.chat_id, "text": client_msg, "parse_mode": "HTML"},
+            job_id=job.job_id, seq=seq,
+        )
+        seq += 1
+        if parsed.supervisor_block:
+            sup_msg = f"{'─' * 30}\n{_escape_html(parsed.supervisor_block)}"
+            await enqueue_message(
+                db, BOT_ID, job.chat_id, "send_message",
+                {"chat_id": job.chat_id, "text": sup_msg, "parse_mode": "HTML"},
+                job_id=job.job_id, seq=seq,
+            )
+    else:
+        await enqueue_message(
+            db, BOT_ID, job.chat_id, "send_message",
+            {"chat_id": job.chat_id, "text": formatted, "parse_mode": "HTML"},
+            job_id=job.job_id, seq=seq,
+        )
+
+
 async def handle_sim_launch(
     job: Job, db: AsyncSession, bots: dict[str, Bot],
 ) -> None:

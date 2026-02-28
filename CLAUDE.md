@@ -401,6 +401,23 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 - **Dedup cleanup:** раз в час — DELETE от `telegram_update_dedup` WHERE `received_at < now() - 1 hour`.
 - **Outbox burst:** до 10 сообщений за тик event loop.
 - **Graceful shutdown:** SIGTERM / SIGINT — завершает текущий job, затем выходит.
+- **WORKER_CONCURRENCY:** env var (default=1); при значении >1 — `asyncio.gather(N × _process_one_job)` — параллельные Claude-вызовы в одном процессе; безопасно через `FOR UPDATE SKIP LOCKED`.
+
+### Job registry
+
+| job_type | Бот | Описание |
+|---|---|---|
+| `pro_reference` | Pro | Справочник — Claude Haiku |
+| `interp_photo` | Interpretator | Vision-анализ рисунка |
+| `interp_intake` | Interpretator | INTAKE + оценка полноты материала |
+| `interp_questions` | Interpretator | Генерация 3-4 уточняющих вопросов |
+| `interp_run` | Interpretator | Финальная интерпретация |
+| `concept_hypothesis` | Conceptualizator | Гипотезы |
+| `concept_output` | Conceptualizator | Трёхслойный вывод |
+| `sim_launch` | Simulator | Запуск сессии (встроенный кейс) |
+| `sim_launch_custom` | Simulator | Запуск сессии (пользовательский кейс) |
+| `sim_turn` | Simulator | Одна реплика специалиста → Claude → ответ клиента |
+| `sim_report` | Simulator | Финальный аналитический отчёт (DOCX + TSI/CCI) |
 
 ---
 
@@ -408,10 +425,8 @@ Format: `scope|service_id|run_id|context_id|actor_id|step|fingerprint`. No times
 
 | Область | Проблема | Приоритет |
 |---------|----------|-----------|
-| Pro bot | `screen_menu_{context_id}` callback — показывает статус скрининга и кнопки, но кнопка «📥 Скачать отчёт» (`screen_results_{assessment_id}`) — **заглушка**: отправляет txt/json/docx только если `report_json` заполнен, иначе возвращает ошибку | Средний |
 | Pro bot | Требует v2: текущая версия не адаптирована под production (нет полноценной оплаты через Stars через UI, нет истории артефактов в боте) | Высокий |
-| Simulator | Claude-вызовы в `_handle_specialist_message` выполняются прямо в webhook-обработчике (не через worker job) — блокирует webhook-поток на время ответа Claude (~3-10 сек) | Средний |
-| Screen report | Генерация отчёта (3 Claude-вызова) выполняется прямо в webhook-обработчике screen.py (не через worker) — то же что Simulator | Средний |
+| Screen report | Генерация отчёта (3 Claude-вызова) выполняется прямо в webhook-обработчике screen.py (не через worker) — блокирует webhook-поток на ~15-20 сек | Средний |
 
 ---
 
@@ -486,12 +501,13 @@ No authentication required. Used by Railway for healthchecks.
 - **Callback pattern в Pro:** `launch_{service_id}_{context_id}` (split по `_` с maxsplit=2, UUID без изменений)
 - **run_id в FSM:** после успешного verify сохраняется в `BotChatState.state_payload["run_id"]`; `context_id` — в `BotChatState.context_id`
 - **subject_id=0:** открытый токен для клиентского Screen — telegram_id клиента неизвестен в момент выдачи; `verify_link` пропускает проверку subject_id если `token.subject_id == 0`
-- **Screen v2 callback pattern в Pro:** `screen_menu_{context_id}` → статус + кнопки; `screen_create_{context_id}` → создать ScreeningAssessment + token; `screen_results_{assessment_id}` → отправить txt/json/docx
+- **Screen v2 callback pattern в Pro:** `screen_menu_{context_id}` → load most-recent ScreeningAssessment, show status label + action buttons (🔗 link if active/created, 📥 download if completed); `screen_create_{context_id}` → alias to `screen_link_` (issue_link + create ScreeningAssessment); `screen_link_{context_id}` → issue open client token + create ScreeningAssessment + show deep link; `screen_results_{assessment_id}` → load ScreeningAssessment, if `report_json` is set send JSON + DOCX files, else show_alert "Отчёт не готов"
 - **Screen FSM states:** `idle/None` → `/start {jti}` → verify token + load assessment; `active` → start_screening; `phase1/phase2/phase3` → toggle_{i} + confirm_selection; `completed` → финал
 - **specialist_user_id в ScreeningAssessment:** Telegram ID специалиста (BigInteger), используется для уведомления через Pro-бота при завершении скрининга
 - **Хранение сессии в tool-ботах:** Redis отсутствует; полное состояние сессии (Pydantic-модель) сериализуется в `state_payload["session"]` через `model.model_dump(mode="json")` и восстанавливается через `Model.model_validate(data)`. `bot_chat_state.state` дублирует `session.state.value` для маршрутизации без десериализации
 - **Pydantic v2:** все сервисные модели (`app/services/*/models.py`) используют Pydantic v2 API (`model_dump`, `model_validate`). Совместимость v1-стиля (`class Config`) в оригинальных ботах не переносится
 - **Simulator FSM states:** `setup` (setup_step: mode→case→goal / upload→crisis→goal_practice) → `active` (реплики специалиста → Claude) → `complete`; сессия в `state_payload["session"]` (SessionData), профиль в `state_payload["profile"]` (SpecialistProfile, накопительно)
+- **Simulator `sim_turn` job:** в состоянии `active` webhook немедленно возвращает управление Telegram (enqueue `sim_turn`); worker делает Claude-вызов, обновляет `state_payload["session"]`, пишет ответ через outbox. payload keys: `text` (str), `state_payload` (dict), `role` (str). `sim_turn` не входит в `TERMINAL_JOB_TYPES` — billing не затрагивается.
 - **Simulator report:** `generate_report_docx()` возвращает `io.BytesIO` (не путь к файлу); отправляется через `InputFile(buf, filename=...)` как `.docx`
 - **Simulator PRACTICE mode:** `custom_prompt` (system prompt + данные специалиста) хранится в `state_payload["custom_prompt"]`; при каждом запросе к Claude берётся оттуда
 - **screening_assessment и Alembic:** таблица `screening_assessment` покрыта миграцией `0005_add_screening_assessment.py`. Миграция содержит `if "screening_assessment" not in inspector.get_table_names(): return` guard — безопасна для production-БД где таблица уже существует (создана через `create_all`).
