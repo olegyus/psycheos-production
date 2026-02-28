@@ -490,6 +490,9 @@ No authentication required. Used by Railway for healthchecks.
 
 ## Принятые решения (НЕ МЕНЯТЬ)
 
+### Billing: sim_report not billed separately
+`sim_report` excluded from `TERMINAL_JOB_TYPES`. Stars are committed on `sim_launch` / `sim_launch_custom`. Report generation is part of the session, not a separate billable event.
+
 - **LinkToken:** `jti` UUID как PK (`gen_random_uuid()`), `UNIQUE(service_id, run_id)` — одна активная сессия на пару (сервис, запуск), `subject_id` = `telegram_id` пользователя, которому выдан пропуск
 - **Alembic:** async через `create_async_engine` + psycopg3 (NullPool), URL берётся из `settings.DATABASE_URL_DIRECT` (прямое соединение, порт 5432, не pooler)
 - **Порядок применения миграций:** `alembic upgrade head` применяем только после завершения всех шагов Фазы 3 — не раньше
