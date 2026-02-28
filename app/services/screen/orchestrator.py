@@ -147,8 +147,7 @@ class ScreenOrchestrator:
         await self.db.flush()
 
         if state["confidence"] >= _CONFIDENCE_THRESHOLD:
-            report = await self._generate_report(assessment_id)
-            return {"action": "complete", "report": report}
+            return {"action": "complete"}
 
         await self.db.execute(
             update(ScreeningAssessment)
@@ -200,8 +199,7 @@ class ScreenOrchestrator:
 
         if exit_by_confidence or exit_by_count or exit_by_stop:
             if exit_by_confidence:
-                report = await self._generate_report(assessment_id)
-                return {"action": "complete", "report": report}
+                return {"action": "complete"}
             # Exited by count or stop signal — move to Phase 3
             await self.db.execute(
                 update(ScreeningAssessment)
@@ -239,8 +237,7 @@ class ScreenOrchestrator:
         await self._save_engine_state(assessment_id, state, phase3_questions=new_q_count)
 
         if new_q_count >= _MAX_PHASE3_QUESTIONS or state["confidence"] >= _CONFIDENCE_THRESHOLD:
-            report = await self._generate_report(assessment_id)
-            return {"action": "complete", "report": report}
+            return {"action": "complete"}
 
         q = await self._select_next_phase3_question(state)
         return {"action": "show_screen", "screen": q, "phase": 3}

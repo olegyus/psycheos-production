@@ -33,7 +33,7 @@ from app.database import async_session
 from app.models.job import Job as JobModel
 from app.services.billing import commit_by_run_id, cancel_by_run_id, TERMINAL_JOB_TYPES
 from app.services.job_queue import claim_next, mark_done, mark_failed
-from app.services.outbox import dispatch_one
+from app.services.outbox import dispatch_one, enqueue_message
 from app.worker.handlers import REGISTRY
 
 logger = logging.getLogger(__name__)
@@ -157,6 +157,25 @@ async def _mark_job_failed(job_id: uuid.UUID, error: str) -> None:
                     except Exception:
                         logger.exception(
                             "[worker] billing cancel failed for run_id=%s", job_row.run_id
+                        )
+
+                # ── User notification on permanent failure ────────────────
+                if job_row.status == "failed" and job_row.chat_id:
+                    try:
+                        await enqueue_message(
+                            db, job_row.bot_id, job_row.chat_id, "send_message",
+                            {
+                                "chat_id": job_row.chat_id,
+                                "text": (
+                                    "⚠️ Произошла ошибка при обработке запроса. "
+                                    "Попробуйте запустить инструмент заново."
+                                ),
+                            },
+                        )
+                    except Exception:
+                        logger.exception(
+                            "[worker] could not enqueue error notification for chat_id=%s",
+                            job_row.chat_id,
                         )
 
                 await db.commit()

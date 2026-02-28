@@ -14,15 +14,12 @@ import logging
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 
-from app.config import settings
-from app.models.artifact import Artifact
 from app.models.bot_chat_state import BotChatState
-from app.models.context import Context
 from app.models.screening_assessment import ScreeningAssessment
+from app.services.job_queue import enqueue
 from app.services.links import LinkVerifyError, verify_link
 from app.services.screen.orchestrator import ScreenOrchestrator
 from app.webhooks.common import upsert_chat_state
@@ -224,7 +221,7 @@ async def _handle_callback(
             header = f"📋 Вопрос {screen_index + 1} из 6" if result["phase"] == 1 else None
             await _show_multi_select(bot, chat_id, result["screen"], [], header=header)
         elif result["action"] == "complete":
-            await _handle_completion(bot, db, chat_id, user_id, state, result)
+            await _handle_completion(bot, db, chat_id, user_id, state)
         return
 
     # ── toggle_{idx} ─────────────────────────────────────────────────────
@@ -305,15 +302,7 @@ async def _handle_callback(
             ph1_header = f"📋 Вопрос {screen_idx + 1} из 6" if next_phase == 1 else None
             await _show_multi_select(bot, chat_id, result["screen"], [], header=ph1_header)
         elif result["action"] == "complete":
-            await bot.send_message(chat_id=chat_id, text="⏳ Анализирую ваши ответы...")
-            try:
-                await _handle_completion(bot, db, chat_id, user_id, state, result)
-            except Exception:
-                logger.exception("[screen] completion failed for chat_id=%s", chat_id)
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text="Произошла ошибка при формировании отчёта. Попробуйте написать /start — мы восстановим ваш прогресс.",
-                )
+            await _handle_completion(bot, db, chat_id, user_id, state)
         return
 
 
@@ -400,9 +389,8 @@ async def _handle_completion(
     chat_id: int,
     user_id: int | None,
     state: BotChatState | None,
-    result: dict,
 ) -> None:
-    """Mark assessment complete in FSM, notify client, notify specialist."""
+    """Set FSM to completed and enqueue screen_report job (3 Claude calls in worker)."""
     payload = (state.state_payload or {}) if state else {}
     new_payload = {k: v for k, v in payload.items() if k not in ("current_screen", "selected_options")}
 
@@ -415,95 +403,23 @@ async def _handle_completion(
     await bot.send_message(
         chat_id=chat_id,
         text=(
-            "✅ *Скрининг завершён!*\n\n"
-            "Спасибо за ваши ответы. Результаты переданы вашему специалисту.\n\n"
-            "_Специалист свяжется с вами для обсуждения результатов._"
+            "✅ *Ответы получены!*\n\n"
+            "⏳ Формируем ваш профиль — это займёт 1–2 минуты.\n\n"
+            "_Результаты будут отправлены сюда автоматически._"
         ),
         parse_mode="Markdown",
     )
 
-    # Persist artifact so Pro bot "История результатов" shows this screening
     assessment_id_str = payload.get("assessment_id")
-    if assessment_id_str and state and state.context_id and result.get("report"):
-        await _save_screen_artifact(db, assessment_id_str, state.context_id, result["report"])
-
-    # Notify specialist via Pro bot
     if assessment_id_str:
-        await _notify_specialist(db, assessment_id_str, state.context_id if state else None)
-
-
-async def _save_screen_artifact(
-    db: AsyncSession, assessment_id_str: str, context_id, report: dict
-) -> None:
-    """Insert a completed screening artifact; idempotent via UNIQUE(run_id, service_id)."""
-    try:
-        res = await db.execute(
-            select(ScreeningAssessment).where(ScreeningAssessment.id == UUID(assessment_id_str))
+        await enqueue(
+            db, "screen_report", "screen", chat_id,
+            payload={
+                "assessment_id": assessment_id_str,
+                "context_id": str(state.context_id) if state and state.context_id else None,
+            },
+            user_id=user_id,
+            context_id=state.context_id if state else None,
+            run_id=payload.get("run_id"),
+            priority=4,
         )
-        assessment = res.scalar_one_or_none()
-        if not assessment:
-            logger.warning("[screen] _save_screen_artifact: assessment %s not found", assessment_id_str)
-            return
-
-        run_id = assessment.link_token_jti or assessment.id
-        report_text: str = report.get("report_text") or ""
-        summary = report_text[:200].strip() or None
-
-        stmt = pg_insert(Artifact).values(
-            context_id=context_id,
-            service_id="screen",
-            run_id=run_id,
-            specialist_telegram_id=assessment.specialist_user_id,
-            payload=report,
-            summary=summary,
-        ).on_conflict_do_nothing(constraint="uq_artifacts_run_service")
-        await db.execute(stmt)
-        await db.flush()
-        logger.info("[screen] artifact saved for assessment %s", assessment_id_str)
-    except Exception:
-        logger.warning("[screen] failed to save artifact for %s", assessment_id_str, exc_info=True)
-
-
-async def _notify_specialist(
-    db: AsyncSession, assessment_id_str: str, context_id
-) -> None:
-    """Send a completion notification to the specialist in the Pro bot.
-
-    specialist_user_id is taken from ScreeningAssessment (BigInteger Telegram ID).
-    Context is loaded only to get client_ref for the label.
-    """
-    try:
-        assessment_result = await db.execute(
-            select(ScreeningAssessment).where(
-                ScreeningAssessment.id == UUID(assessment_id_str)
-            )
-        )
-        assessment = assessment_result.scalar_one_or_none()
-        if not assessment:
-            logger.warning("[screen] _notify_specialist: assessment %s not found", assessment_id_str)
-            return
-
-        specialist_telegram_id: int = assessment.specialist_user_id  # BigInteger Telegram ID
-
-        label: str = str(assessment_id_str)[:8]
-        if context_id:
-            ctx_result = await db.execute(
-                select(Context).where(Context.context_id == context_id)
-            )
-            ctx = ctx_result.scalar_one_or_none()
-            if ctx and ctx.client_ref:
-                label = ctx.client_ref
-
-        from telegram import Bot as TgBot
-        pro_bot = TgBot(token=settings.TG_TOKEN_PRO)
-        await pro_bot.send_message(
-            chat_id=specialist_telegram_id,
-            text=(
-                f"✅ *Скрининг завершён*\n\n"
-                f"Кейс: {label}\n\n"
-                f"Для просмотра результатов откройте кейс в меню."
-            ),
-            parse_mode="Markdown",
-        )
-    except Exception:
-        logger.warning("[screen] Failed to notify specialist", exc_info=True)

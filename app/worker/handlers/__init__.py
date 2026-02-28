@@ -8,6 +8,7 @@ from app.worker.handlers.conceptualizator import (
     handle_concept_hypothesis,
     handle_concept_output,
 )
+from app.worker.handlers.screen import handle_screen_report
 from app.worker.handlers.interpretator import (
     handle_interp_intake,
     handle_interp_photo,
@@ -25,6 +26,8 @@ from app.worker.handlers.simulator import (
 REGISTRY: dict = {
     # Pro bot
     "pro_reference": handle_pro_reference,
+    # Screen bot
+    "screen_report": handle_screen_report,
     # Interpretator bot
     "interp_photo": handle_interp_photo,
     "interp_intake": handle_interp_intake,

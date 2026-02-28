@@ -18,6 +18,7 @@ state_payload keys:
   profile         — SpecialistProfile.model_dump(mode="json") | null
 """
 
+import io
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
