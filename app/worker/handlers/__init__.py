@@ -19,6 +19,7 @@ from app.worker.handlers.simulator import (
     handle_sim_launch,
     handle_sim_launch_custom,
     handle_sim_report,
+    handle_sim_turn,
 )
 
 REGISTRY: dict = {
@@ -36,6 +37,7 @@ REGISTRY: dict = {
     "sim_launch": handle_sim_launch,
     "sim_launch_custom": handle_sim_launch_custom,
     "sim_report": handle_sim_report,
+    "sim_turn": handle_sim_turn,
 }
 
 __all__ = ["REGISTRY"]

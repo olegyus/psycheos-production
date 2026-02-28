@@ -20,7 +20,6 @@ state_payload keys:
 
 import logging
 
-from anthropic import AsyncAnthropic
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 
@@ -29,10 +28,7 @@ from app.models.bot_chat_state import BotChatState
 from app.services.job_queue import enqueue
 from app.services.links import LinkVerifyError, verify_link
 from app.services.simulator.cases import BUILTIN_CASES
-from app.services.simulator.formatter import (
-    _escape_html, build_iteration_log, format_for_telegram,
-    parse_claude_response,
-)
+from app.services.simulator.formatter import _escape_html
 from app.services.simulator.goals import GOAL_LABELS, MODE_LABELS
 from app.services.simulator.schemas import (
     CrisisFlag, SessionData, SessionGoal, SessionMode,
@@ -43,8 +39,6 @@ from app.webhooks.common import upsert_chat_state
 logger = logging.getLogger(__name__)
 
 BOT_ID = "simulator"
-_ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929"
-_MAX_SESSION_HISTORY = 50
 
 
 # ── Keyboards ─────────────────────────────────────────────────────────────────
@@ -479,6 +473,7 @@ async def _handle_specialist_message(
     bot: Bot, db: AsyncSession, state: BotChatState,
     chat_id: int, user_id: int | None, text: str, payload: dict,
 ) -> None:
+    """Enqueue a sim_turn job; worker calls Claude and dispatches the reply via outbox."""
     if "session" not in payload:
         await bot.send_message(
             chat_id=chat_id,
@@ -486,73 +481,16 @@ async def _handle_specialist_message(
         )
         return
 
-    session_data = SessionData.model_validate(payload["session"])
-    system_prompt = _get_system_prompt(payload, session_data)
-
-    session_data.messages.append({"role": "user", "content": text})
-
-    if len(session_data.messages) > _MAX_SESSION_HISTORY:
-        session_data.messages = (
-            session_data.messages[:1]
-            + session_data.messages[-(_MAX_SESSION_HISTORY - 1):]
-        )
-
-    await bot.send_chat_action(chat_id=chat_id, action="typing")
-
-    try:
-        claude_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        resp = await claude_client.messages.create(
-            model=_ANTHROPIC_MODEL,
-            max_tokens=2048,
-            system=system_prompt,
-            messages=session_data.messages,
-        )
-        claude_response = resp.content[0].text
-    except Exception as e:
-        logger.exception("[simulator] Claude error handling specialist message")
-        session_data.messages.pop()
-        payload = {**payload, "session": session_data.model_dump(mode="json")}
-        await upsert_chat_state(
-            db, bot_id=BOT_ID, chat_id=chat_id, state="active",
-            state_payload=payload, user_id=user_id,
-            context_id=state.context_id,
-        )
-        await bot.send_message(
-            chat_id=chat_id,
-            text=f"❌ Ошибка при обращении к Claude:\n<code>{_escape_html(str(e))}</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    session_data.messages.append({"role": "assistant", "content": claude_response})
-
-    parsed = parse_claude_response(claude_response)
-    if parsed.signal:
-        session_data.signal_log.append(parsed.signal)
-    if parsed.fsm_state:
-        session_data.fsm_log.append(parsed.fsm_state)
-
-    replica_id = len(session_data.iteration_log) + 1
-    iteration = build_iteration_log(parsed=parsed, replica_id=replica_id, specialist_input=text)
-    session_data.iteration_log.append(iteration)
-
-    payload = {**payload, "session": session_data.model_dump(mode="json")}
-    await upsert_chat_state(
-        db, bot_id=BOT_ID, chat_id=chat_id, state="active",
-        state_payload=payload, user_id=user_id,
-        context_id=state.context_id,
+    await enqueue(
+        db, "sim_turn", BOT_ID, chat_id,
+        payload={
+            "text": text,
+            "state_payload": payload,
+            "role": state.role or "specialist",
+        },
+        user_id=user_id, context_id=state.context_id, run_id=payload.get("run_id"),
+        priority=5,
     )
-
-    formatted = format_for_telegram(parsed)
-
-    if len(formatted) > 4000:
-        client_msg = f"🗣 <b>Клиент:</b>\n{_escape_html(parsed.client_text)}"
-        await bot.send_message(chat_id=chat_id, text=client_msg, parse_mode="HTML")
-        if parsed.supervisor_block:
-            sup_msg = f"{'─' * 30}\n{_escape_html(parsed.supervisor_block)}"
-            await bot.send_message(chat_id=chat_id, text=sup_msg, parse_mode="HTML")
-    else:
-        await bot.send_message(chat_id=chat_id, text=formatted, parse_mode="HTML")
 
 
 # ── /end flow ──────────────────────────────────────────────────────────────────

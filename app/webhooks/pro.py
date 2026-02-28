@@ -441,7 +441,7 @@ async def handle_callback(
 
     if data.startswith("screen_menu_"):
         context_id_str = data[len("screen_menu_"):]
-        await handle_screen_menu(query, bot, db, chat_id, context_id_str)
+        await handle_screen_menu(query, bot, db, chat_id, user_id, context_id_str)
         return
     if data.startswith("screen_create_"):
         context_id_str = data[len("screen_create_"):]
@@ -449,7 +449,7 @@ async def handle_callback(
         return
     if data.startswith("screen_results_"):
         assessment_id_str = data[len("screen_results_"):]
-        await handle_screen_results(query, bot, db, chat_id, assessment_id_str)
+        await handle_screen_results(query, bot, db, chat_id, user_id, assessment_id_str)
         return
     if data.startswith("screen_link_"):
         context_id_str = data[len("screen_link_"):]
@@ -745,16 +745,74 @@ _TOOL_LABELS = {
 }
 
 
-async def handle_screen_menu(query, bot, db, chat_id, context_id_str):
-    """Screen v2 — not yet implemented."""
-    await query.answer("Скрининг в разработке.", show_alert=True)
-    return
+_SCREEN_STATUS_LABELS: dict[str, str] = {
+    "created": "⏳ Создан (клиент ещё не начал)",
+    "in_progress": "🔄 В процессе",
+    "completed": "✅ Завершён",
+    "expired": "⌛ Просрочен",
+}
+
+
+async def handle_screen_menu(query, bot, db, chat_id, user_id, context_id_str):
+    """Show current screening status and action buttons for a context."""
+    try:
+        context_id = uuid.UUID(context_id_str)
+    except ValueError:
+        await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
+        return
+
+    result = await db.execute(
+        select(ScreeningAssessment)
+        .where(ScreeningAssessment.context_id == context_id)
+        .order_by(ScreeningAssessment.created_at.desc())
+        .limit(1)
+    )
+    assessment = result.scalar_one_or_none()
+
+    back_btn = InlineKeyboardButton("◀️ К кейсу", callback_data=f"case_{context_id_str}")
+
+    if not assessment:
+        await query.edit_message_text(
+            text=(
+                "📊 *Скрининг*\n\n"
+                "Опрос ещё не создан.\n"
+                "Нажмите кнопку ниже, чтобы отправить клиенту ссылку для прохождения скрининга."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔗 Отправить ссылку клиенту", callback_data=f"screen_link_{context_id_str}")],
+                [back_btn],
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+    status_label = _SCREEN_STATUS_LABELS.get(assessment.status, assessment.status)
+    assessment_id_str = str(assessment.id)
+    date_str = assessment.created_at.strftime("%d.%m.%Y %H:%M")
+
+    lines = ["📊 *Скрининг*\n", f"Статус: {status_label}", f"Создан: {date_str}"]
+    if assessment.completed_at:
+        lines.append(f"Завершён: {assessment.completed_at.strftime('%d.%m.%Y %H:%M')}")
+    if assessment.phase > 0 and assessment.status != "completed":
+        lines.append(f"Прогресс: фаза {assessment.phase}")
+
+    buttons = []
+    if assessment.status == "completed" and assessment.report_json:
+        buttons.append([InlineKeyboardButton("📥 Скачать отчёт", callback_data=f"screen_results_{assessment_id_str}")])
+    if assessment.status in ("created", "in_progress"):
+        buttons.append([InlineKeyboardButton("🔗 Отправить ссылку клиенту", callback_data=f"screen_link_{context_id_str}")])
+    buttons.append([back_btn])
+
+    await query.edit_message_text(
+        text="\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="Markdown",
+    )
 
 
 async def handle_screen_create(query, bot, db, chat_id, user_id, context_id_str):
-    """Screen v2 — not yet implemented."""
-    await query.answer("Скрининг в разработке.", show_alert=True)
-    return
+    """Alias: send a screening link (same as screen_link_)."""
+    await handle_screen_link(query, bot, db, chat_id, user_id, context_id_str)
 
 
 async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
@@ -806,10 +864,44 @@ async def handle_screen_link(query, bot, db, chat_id, user_id, context_id_str):
         parse_mode="Markdown",
     )
 
-async def handle_screen_results(query, bot, db, chat_id, assessment_id_str):
-    """Screen v2 — not yet implemented."""
-    await query.answer("Скрининг в разработке.", show_alert=True)
-    return
+async def handle_screen_results(query, bot, db, chat_id, user_id, assessment_id_str):
+    """Send JSON + DOCX report files for a completed screening assessment."""
+    try:
+        assessment_id = uuid.UUID(assessment_id_str)
+    except ValueError:
+        await query.answer("Неверный ID скрининга.", show_alert=True)
+        return
+
+    result = await db.execute(
+        select(ScreeningAssessment).where(ScreeningAssessment.id == assessment_id)
+    )
+    assessment = result.scalar_one_or_none()
+    if not assessment:
+        await query.answer("Скрининг не найден.", show_alert=True)
+        return
+    if not assessment.report_json:
+        await query.answer("Отчёт ещё не готов. Подождите завершения скрининга.", show_alert=True)
+        return
+
+    await query.answer()
+
+    date_prefix = assessment.created_at.strftime("%Y%m%d")
+    ctx_prefix = str(assessment.context_id)[:8]
+    report_json = assessment.report_json
+
+    json_bytes = json.dumps(report_json, ensure_ascii=False, indent=2).encode("utf-8")
+    await bot.send_document(
+        chat_id=chat_id,
+        document=InputFile(io.BytesIO(json_bytes), filename=f"screen_{ctx_prefix}_{date_prefix}.json"),
+        caption="📊 Скрининг — структурированные данные (JSON)",
+    )
+
+    docx_bytes = await generate_report_docx(report_json)
+    await bot.send_document(
+        chat_id=chat_id,
+        document=InputFile(io.BytesIO(docx_bytes), filename=f"screen_{ctx_prefix}_{date_prefix}.docx"),
+        caption="📋 Скрининг — структурный профиль (DOCX)",
+    )
 
 
 async def handle_launch_tool(query, bot, db, chat_id, user_id, service_id, context_id_str):
