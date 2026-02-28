@@ -12,10 +12,12 @@ state_payload keys:
 """
 import logging
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Bot, Update
 
 from app.config import settings
+from app.models.artifact import Artifact
 from app.models.bot_chat_state import BotChatState
 from app.services.conceptualizer.decision_policy import select_next_question
 from app.services.conceptualizer.models import DataMap, SessionState
@@ -138,26 +140,60 @@ async def _start_session(
         )
         return
 
-    session = SessionState(
-        session_id=f"cnc_{chat_id}_{str(token.run_id).replace('-', '')[:8]}",
-        specialist_id=str(user_id or chat_id),
-    )
-    # Skip INIT → go straight to DATA_COLLECTION
-    session.transition_to(SessionStateEnum.DATA_COLLECTION)
+    # Query existing artifacts for this context (Screen / Interpreter results)
+    try:
+        art_result = await db.execute(
+            select(Artifact.service_id, Artifact.summary)
+            .where(Artifact.context_id == token.context_id)
+            .order_by(Artifact.created_at.desc())
+        )
+        existing_artifacts = art_result.all()
+    except Exception:
+        logger.warning("[%s] Could not query artifacts for context %s", BOT_ID, token.context_id)
+        existing_artifacts = []
 
-    await upsert_chat_state(
-        db,
-        bot_id=BOT_ID,
-        chat_id=chat_id,
-        state="data_collection",
-        state_payload={
-            "run_id": str(token.run_id),
-            "session": session.model_dump(mode="json"),
-        },
-        user_id=user_id,
-        role=token.role,
-        context_id=token.context_id,
-    )
+    artifact_lines: list[str] = []
+    _service_emoji = {"screen": "📊 Скрининг", "interpretator": "🧠 Интерпретация"}
+    for svc_id, svc_summary in existing_artifacts:
+        label = _service_emoji.get(svc_id, svc_id)
+        short = (svc_summary or "").split(".")[0][:60]
+        artifact_lines.append(f"• {label}: {short}" if short else f"• {label}")
+
+    artifact_block = ""
+    if artifact_lines:
+        artifact_block = (
+            "\n\n<b>Данные по кейсу:</b>\n" + "\n".join(artifact_lines)
+        )
+
+    try:
+        session = SessionState(
+            session_id=f"cnc_{chat_id}_{str(token.run_id).replace('-', '')[:8]}",
+            specialist_id=str(user_id or chat_id),
+        )
+        # Skip INIT → go straight to DATA_COLLECTION
+        session.transition_to(SessionStateEnum.DATA_COLLECTION)
+
+        await upsert_chat_state(
+            db,
+            bot_id=BOT_ID,
+            chat_id=chat_id,
+            state="data_collection",
+            state_payload={
+                "run_id": str(token.run_id),
+                "session": session.model_dump(mode="json"),
+            },
+            user_id=user_id,
+            role=token.role,
+            context_id=token.context_id,
+        )
+    except Exception:
+        logger.exception("[%s] Failed to initialise session for user=%s", BOT_ID, user_id)
+        await bot.send_message(
+            chat_id=chat_id,
+            text="❌ Не удалось открыть сессию. Попробуйте снова или запросите новую ссылку в Pro.",
+        )
+        return
+
     logger.info(
         f"[{BOT_ID}] Session started: user={user_id} "
         f"context={token.context_id} run_id={token.run_id}"
@@ -166,9 +202,10 @@ async def _start_session(
         chat_id=chat_id,
         text=(
             "🎯 <b>PsycheOS Conceptualizer</b>\n\n"
-            "Сессия открыта.\n\n"
+            "Сессия открыта."
+            f"{artifact_block}\n\n"
             "<b>Этап 1: Сбор данных</b>\n"
-            "Предоставьте информацию о клиенте:\n"
+            "Опишите случай клиента:\n"
             "• Основные жалобы\n"
             "• Наблюдения по слоям (L0–L4)\n"
             "• Ключевые маркеры\n\n"

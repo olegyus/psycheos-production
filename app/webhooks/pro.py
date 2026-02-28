@@ -1177,3 +1177,29 @@ async def show_artifact_detail(
         parse_mode="Markdown",
     )
 
+    # Interpreter artifacts: resend the stored txt + json files
+    if a.service_id == "interpretator":
+        date_prefix = a.created_at.strftime("%Y%m%d")
+        ctx_prefix = context_id_str[:8]
+        txt_report: str = a.payload.get("txt_report", "")
+        structured: dict = a.payload.get("structured", {})
+        if txt_report:
+            await bot.send_document(
+                chat_id=chat_id,
+                document=InputFile(
+                    io.BytesIO(txt_report.encode("utf-8")),
+                    filename=f"interpretation_{ctx_prefix}_{date_prefix}.txt",
+                ),
+                caption="📄 Результаты интерпретации",
+            )
+        if structured:
+            json_bytes = json.dumps(structured, ensure_ascii=False, indent=2).encode("utf-8")
+            await bot.send_document(
+                chat_id=chat_id,
+                document=InputFile(
+                    io.BytesIO(json_bytes),
+                    filename=f"interpretation_{ctx_prefix}_{date_prefix}.json",
+                ),
+                caption="📋 Структурированные данные (JSON)",
+            )
+
