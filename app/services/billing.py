@@ -123,7 +123,19 @@ async def reserve_stars(
 
     Raises InsufficientBalance if available balance < stars.
     Modifies wallet in place; caller must db.flush() / db.commit().
+
+    Re-fetches the wallet row with SELECT FOR UPDATE so that concurrent
+    reserve_stars calls serialize at the DB level and cannot both pass
+    the available-balance check on stale data.
     """
+    # Re-fetch under row-level lock before the critical section.
+    # The wallet object passed by the caller may be stale if two requests
+    # raced through the pre-check in the webhook layer simultaneously.
+    locked = await db.execute(
+        select(Wallet).where(Wallet.wallet_id == wallet.wallet_id).with_for_update()
+    )
+    wallet = locked.scalar_one()
+
     available = wallet.balance_stars - wallet.reserved_stars
     if available < stars:
         raise InsufficientBalance(available=available, required=stars)

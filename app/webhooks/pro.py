@@ -464,7 +464,7 @@ async def handle_callback(
         await query.edit_message_text(
             text=(
                 f"💰 *Баланс*\n\n"
-                f"Доступно: {wallet.balance_stars} ⭐\n"
+                f"Доступно: {wallet.balance_stars - wallet.reserved_stars} ⭐\n"
                 f"Зарезервировано: {wallet.reserved_stars} ⭐\n\n"
                 f"_Пополнение происходит автоматически при запуске инструмента, "
                 f"если средств недостаточно._"
