@@ -20,7 +20,7 @@ from app.models.bot_chat_state import BotChatState
 from app.services.conceptualizer.decision_policy import select_next_question
 from app.services.conceptualizer.models import DataMap, SessionState
 from app.services.conceptualizer.enums import SessionStateEnum
-from app.services.job_queue import enqueue
+from app.services.job_queue import enqueue, is_job_pending_for_chat
 from app.services.links import LinkVerifyError, verify_link
 from app.webhooks.common import upsert_chat_state
 
@@ -274,6 +274,9 @@ async def _handle_dialogue(
     # Worker (app/worker/handlers/conceptualizator.py) extracts hypothesis via Claude,
     # checks should_continue_dialogue, and either asks the next question or triggers output.
     run_id_str = (state.state_payload or {}).get("run_id")
+    if await is_job_pending_for_chat(db, bot_id="conceptualizator", chat_id=chat_id):
+        await bot.send_message(chat_id, "⏳ Предыдущий запрос ещё обрабатывается, подождите...")
+        return
     await _save_session(db, session, "socratic_dialogue", state, chat_id, user_id)
     await enqueue(
         db, "concept_hypothesis", BOT_ID, chat_id,
