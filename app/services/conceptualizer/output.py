@@ -247,6 +247,7 @@ async def _assemble_layer_a(session: SessionState) -> LayerA:
         max_tokens=2000,
         system=_LAYER_A_PROMPT,
         messages=[{"role": "user", "content": user_message}],
+        timeout=120.0,
     )
     data = _parse_json(resp.content[0].text)
 
@@ -299,6 +300,7 @@ async def _assemble_layer_b(session: SessionState) -> LayerB:
         max_tokens=2000,
         system=_LAYER_B_PROMPT,
         messages=[{"role": "user", "content": user_message}],
+        timeout=120.0,
     )
     data = _parse_json(resp.content[0].text)
 
@@ -335,6 +337,7 @@ async def _assemble_layer_c(session: SessionState) -> LayerC:
         max_tokens=2000,
         system=_LAYER_C_PROMPT,
         messages=[{"role": "user", "content": user_message}],
+        timeout=120.0,
     )
     data = _parse_json(resp.content[0].text)
 
