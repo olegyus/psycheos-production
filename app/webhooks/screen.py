@@ -400,16 +400,6 @@ async def _handle_completion(
         context_id=state.context_id if state else None,
     )
 
-    await bot.send_message(
-        chat_id=chat_id,
-        text=(
-            "✅ *Ответы получены!*\n\n"
-            "⏳ Формируем ваш профиль — это займёт 1–2 минуты.\n\n"
-            "_Результаты будут отправлены сюда автоматически._"
-        ),
-        parse_mode="Markdown",
-    )
-
     assessment_id_str = payload.get("assessment_id")
     if assessment_id_str:
         if await is_job_pending_for_chat(db, bot_id="screen", chat_id=chat_id):

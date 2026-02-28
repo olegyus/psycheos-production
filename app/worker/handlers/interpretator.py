@@ -429,8 +429,12 @@ async def handle_interp_run(
     )
 
     # Save artifact
-    material_type = state_payload.get("material_type", "материал")
-    completeness = state_payload.get("completeness", "")
+    _raw_type = state_payload.get("material_type", "")
+    material_type = _raw_type if _raw_type and _raw_type != "unknown" else "текст"
+    _raw_comp = state_payload.get("completeness", "")
+    # completeness is never updated in the Phase-7+ flow — material reached interp_run
+    # only when accepted, so "sufficient" is always accurate at this point.
+    completeness = _raw_comp if _raw_comp and _raw_comp != "unknown" else "sufficient"
     await save_artifact(
         db=db,
         run_id=job.run_id,
