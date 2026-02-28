@@ -146,7 +146,7 @@ async def _handle_start_token(
         state="active",
         state_payload={
             "assessment_id": str(assessment.id),
-            "run_id": str(token.run_id),
+            "run_id": str(token.jti),   # jti = billing key (matches reserve_stars in pro.py)
         },
         user_id=user_id,
         role="client",

@@ -88,7 +88,7 @@ async def _start_session(
         chat_id=chat_id,
         state="active",
         state_payload={
-            "run_id": str(token.run_id),
+            "run_id": str(token.jti),   # jti = billing key (matches reserve_stars in pro.py)
             "mode": "STANDARD",
             "iteration_count": 0,
             "repair_attempts": 0,
