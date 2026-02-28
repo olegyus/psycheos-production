@@ -26,7 +26,7 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 
 from app.config import settings
 from app.models.bot_chat_state import BotChatState
-from app.services.job_queue import enqueue
+from app.services.job_queue import enqueue, is_job_pending_for_chat
 from app.services.links import LinkVerifyError, verify_link
 from app.services.simulator.cases import BUILTIN_CASES
 from app.services.simulator.formatter import _escape_html
@@ -430,6 +430,9 @@ async def _launch_session(
     case_key = case_key_map.get(case.case_id, "1")
 
     await msg.edit_text("⏳ Инициализация симуляции...")
+    if await is_job_pending_for_chat(db, bot_id="simulator", chat_id=chat_id):
+        await bot.send_message(chat_id, "⏳ Подождите, обрабатываю предыдущий запрос...")
+        return
     await enqueue(
         db, "sim_launch", BOT_ID, chat_id,
         payload={
@@ -453,6 +456,9 @@ async def _launch_session_custom(
 ) -> None:
     """Enqueue sim_launch_custom job; worker builds prompt and starts the session."""
     await msg.edit_text("⏳ Инициализация симуляции с вашими данными...")
+    if await is_job_pending_for_chat(db, bot_id="simulator", chat_id=chat_id):
+        await bot.send_message(chat_id, "⏳ Подождите, обрабатываю предыдущий запрос...")
+        return
     await enqueue(
         db, "sim_launch_custom", BOT_ID, chat_id,
         payload={
@@ -482,6 +488,9 @@ async def _handle_specialist_message(
         )
         return
 
+    if await is_job_pending_for_chat(db, bot_id="simulator", chat_id=chat_id):
+        await bot.send_message(chat_id, "⏳ Подождите, обрабатываю предыдущий запрос...")
+        return
     await enqueue(
         db, "sim_turn", BOT_ID, chat_id,
         payload={
@@ -518,6 +527,9 @@ async def _on_end_confirm(
         return
 
     await msg.edit_text("⏳ Формирование аналитического отчёта...")
+    if await is_job_pending_for_chat(db, bot_id="simulator", chat_id=chat_id):
+        await bot.send_message(chat_id, "⏳ Подождите, обрабатываю предыдущий запрос...")
+        return
     await enqueue(
         db, "sim_report", BOT_ID, chat_id,
         payload={

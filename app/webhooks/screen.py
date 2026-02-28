@@ -19,7 +19,7 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 
 from app.models.bot_chat_state import BotChatState
 from app.models.screening_assessment import ScreeningAssessment
-from app.services.job_queue import enqueue
+from app.services.job_queue import enqueue, is_job_pending_for_chat
 from app.services.links import LinkVerifyError, verify_link
 from app.services.screen.orchestrator import ScreenOrchestrator
 from app.webhooks.common import upsert_chat_state
@@ -412,6 +412,8 @@ async def _handle_completion(
 
     assessment_id_str = payload.get("assessment_id")
     if assessment_id_str:
+        if await is_job_pending_for_chat(db, bot_id="screen", chat_id=chat_id):
+            return
         await enqueue(
             db, "screen_report", "screen", chat_id,
             payload={
