@@ -233,8 +233,18 @@ def _hypotheses_context(session: SessionState) -> str:
 
 async def _assemble_layer_a(session: SessionState) -> LayerA:
     hyp_ctx = _hypotheses_context(session)
+    prior_ctx_parts = []
+    if session.screen_context:
+        prior_ctx_parts.append(f"### Скрининг:\n{session.screen_context[:800]}")
+    if session.interpreter_context:
+        prior_ctx_parts.append(f"### Интерпретация:\n{session.interpreter_context[:800]}")
+    prior_ctx = (
+        "\n\n## Дополнительный контекст кейса:\n" + "\n\n".join(prior_ctx_parts) + "\n\n"
+        if prior_ctx_parts else ""
+    )
     user_message = (
-        f"{hyp_ctx}\n\n"
+        f"{hyp_ctx}"
+        f"{prior_ctx}\n"
         "На основе этих гипотез создай Layer A - техническую модель для специалиста.\n\n"
         "КРИТИЧЕСКИ ВАЖНО:\n"
         "1. Dominant layer - определи по УПРАВЛЯЮЩЕМУ КОНФЛИКТУ, не по частоте упоминаний\n"
@@ -286,8 +296,19 @@ async def _assemble_layer_b(session: SessionState) -> LayerB:
         levels_str = ", ".join(l.value for l in hyp.levels)
         context_lines.append(f"[{levels_str}] {hyp.formulation}\n")
 
+    prior_ctx_parts = []
+    if session.screen_context:
+        prior_ctx_parts.append(f"### Скрининг:\n{session.screen_context[:600]}")
+    if session.interpreter_context:
+        prior_ctx_parts.append(f"### Интерпретация:\n{session.interpreter_context[:600]}")
+    prior_ctx = (
+        "\n\n## Дополнительный контекст:\n" + "\n\n".join(prior_ctx_parts) + "\n\n"
+        if prior_ctx_parts else ""
+    )
+
     user_message = (
-        "\n".join(context_lines) + "\n\n"
+        "\n".join(context_lines)
+        + prior_ctx + "\n"
         "На основе этих управленческих гипотез создай Layer B - мишени вмешательства.\n\n"
         "КРИТИЧЕСКИ ВАЖНО:\n"
         "- Direction = ЧТО должно измениться, НЕ описание паттерна!\n"

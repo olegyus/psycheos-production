@@ -130,11 +130,22 @@ async def extract_hypothesis_from_response(
     message: str, session: SessionState
 ) -> Hypothesis:
     """Extract a structured hypothesis from the specialist's message using Claude."""
+    prior_ctx_parts = []
+    if session.screen_context:
+        prior_ctx_parts.append(f"### Данные скрининга:\n{session.screen_context[:500]}")
+    if session.interpreter_context:
+        prior_ctx_parts.append(f"### Данные интерпретации:\n{session.interpreter_context[:500]}")
+    prior_ctx = (
+        "\n\nФоновые данные кейса:\n" + "\n\n".join(prior_ctx_parts) + "\n\n"
+        if prior_ctx_parts else ""
+    )
+
     user_message = (
         f"Контекст сессии:\n"
         f"- Текущих гипотез: {len(session.get_active_hypotheses())}\n"
         f"- Управленческих гипотез: {len(session.get_managerial_hypotheses())}\n"
-        f"- Вопросов задано: {session.progress.dialogue_turns}\n\n"
+        f"- Вопросов задано: {session.progress.dialogue_turns}\n"
+        f"{prior_ctx}"
         f"Ответ специалиста:\n{message}\n\n"
         "Извлеки структурированную гипотезу из этого ответа.\n"
         'ВАЖНО: Если текст содержит слова "можно", "нужно", "стоит", '

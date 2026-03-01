@@ -7,6 +7,7 @@ Each handler has the signature:
 from app.worker.handlers.conceptualizator import (
     handle_concept_hypothesis,
     handle_concept_output,
+    handle_concept_pre_hypotheses,
 )
 from app.worker.handlers.screen import handle_screen_report
 from app.worker.handlers.interpretator import (
@@ -34,6 +35,7 @@ REGISTRY: dict = {
     "interp_questions": handle_interp_questions,
     "interp_run": handle_interp_run,
     # Conceptualizator bot
+    "concept_pre_hypotheses": handle_concept_pre_hypotheses,
     "concept_hypothesis": handle_concept_hypothesis,
     "concept_output": handle_concept_output,
     # Simulator bot
