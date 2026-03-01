@@ -29,7 +29,7 @@ job.payload keys for sim_report:
 """
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from anthropic import AsyncAnthropic
@@ -370,8 +370,17 @@ async def handle_sim_report(
     tsi_text = f"TSI: {tsi.tsi:.2f} ({tsi.interpretation})" if tsi else "TSI: н/д"
     cci_text = f"CCI: {cci.cci:.2f}" if cci else ""
 
-    # Try docx generation
-    seq = 0
+    # Notification
+    await enqueue_message(
+        db, BOT_ID, job.chat_id, "send_message",
+        {"chat_id": job.chat_id, "text": "📋 Сессия завершена"},
+        job_id=job.job_id, seq=0,
+    )
+
+    # DOCX report
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    context_short = str(job.context_id)[:8] if job.context_id else session_data.case_id
+    filename = f"sim_report_{context_short}_{date_str.replace('-', '')}.docx"
     try:
         docx_buf = generate_report_docx(
             report_text=report_text,
@@ -387,44 +396,19 @@ async def handle_sim_report(
             cci=cci,
             specialist_profile=specialist_profile,
         )
-        exchanges = len(session_data.iteration_log)
-        greens = session_data.signal_log.count("🟢")
-        yellows = session_data.signal_log.count("🟡")
-        reds = session_data.signal_log.count("🔴")
-        caption = (
-            f"📋 <b>Аналитический отчёт v1.1</b>\n\n"
-            f"Кейс: {_escape_html(session_data.case_name)}\n"
-            f"Реплик: {exchanges} | 🟢{greens} 🟡{yellows} 🔴{reds}\n"
-            f"📊 {tsi_text}"
-        )
-        if cci_text:
-            caption += f" | {cci_text}"
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"PsycheOS_Report_{session_data.case_id}_{timestamp}.docx"
         await enqueue_message(
             db, BOT_ID, job.chat_id, "send_document",
-            make_document_payload(job.chat_id, docx_buf.getvalue(), filename, caption, "HTML"),
-            job_id=job.job_id, seq=seq,
+            make_document_payload(job.chat_id, docx_buf.getvalue(), filename, "📋 Аналитический отчёт сессии"),
+            job_id=job.job_id, seq=1,
         )
-        seq += 1
     except Exception as exc:
         logger.error("[worker/sim] docx generation failed: %s", exc)
-        # Fall back to plain text report
-        fallback_header = f"📊 {tsi_text}\n\n"
-        fallback_text = fallback_header + report_text
-        for chunk in _split_text(fallback_text):
-            await enqueue_message(
-                db, BOT_ID, job.chat_id, "send_message",
-                {"chat_id": job.chat_id, "text": chunk},
-                job_id=job.job_id, seq=seq,
-            )
-            seq += 1
 
+    # History hint
     await enqueue_message(
         db, BOT_ID, job.chat_id, "send_message",
-        {"chat_id": job.chat_id, "text": "✅ Сессия завершена. Используйте /start для новой симуляции."},
-        job_id=job.job_id, seq=seq,
+        {"chat_id": job.chat_id, "text": "Результат также доступен в Истории результатов в боте @PsycheOS_Pro"},
+        job_id=job.job_id, seq=2,
     )
 
     final_payload = {
