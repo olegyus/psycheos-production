@@ -133,68 +133,29 @@ async def handle_concept_output(
     session.transition_to(SessionStateEnum.COMPLETE)
     await _persist_session(db, session, "complete", job)
 
-    # Layer A
+    # Notification
     await enqueue_message(
         db, BOT_ID, job.chat_id, "send_message",
-        {
-            "chat_id": job.chat_id,
-            "text": (
-                "📊 <b>LAYER A: Концептуальная модель</b>\n\n"
-                f"<b>Ведущая гипотеза:</b>\n{output.layer_a.leading_formulation}\n\n"
-                f"<b>Доминирующий слой:</b> {output.layer_a.dominant_layer.value}\n\n"
-                f"<b>Конфигурация:</b>\n{output.layer_a.configuration_summary}\n\n"
-                f"<b>Цена системы:</b>\n{output.layer_a.system_cost}"
-            ),
-            "parse_mode": "HTML",
-        },
+        {"chat_id": job.chat_id, "text": "📋 Концептуализация готова"},
         job_id=job.job_id, seq=0,
-    )
-
-    # Layer B
-    b_lines = ["🎯 <b>LAYER B: Мишени вмешательства</b>\n"]
-    for t in output.layer_b.targets:
-        b_lines.append(f"<b>{t.priority}. {t.layer}</b>\n{t.direction}\n")
-    b_lines.append(f"\n<b>Последовательность:</b>\n{output.layer_b.sequencing_notes}")
-    await enqueue_message(
-        db, BOT_ID, job.chat_id, "send_message",
-        {"chat_id": job.chat_id, "text": "\n".join(b_lines), "parse_mode": "HTML"},
-        job_id=job.job_id, seq=1,
-    )
-
-    # Layer C
-    await enqueue_message(
-        db, BOT_ID, job.chat_id, "send_message",
-        {
-            "chat_id": job.chat_id,
-            "text": (
-                "🎭 <b>LAYER C: Метафорический нарратив</b>\n\n"
-                f"<b>Метафора:</b> <i>{output.layer_c.core_metaphor}</i>\n\n"
-                f"{output.layer_c.narrative}\n\n"
-                f"<b>Направление изменения:</b>\n{output.layer_c.direction_of_change}"
-            ),
-            "parse_mode": "HTML",
-        },
-        job_id=job.job_id, seq=2,
     )
 
     # DOCX report
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     docx_buf = generate_concept_docx(output, meta={"date": date_str})
-    filename = f"concept_{output.session_id[:8]}_{date_str.replace('-', '')}.docx"
+    context_short = str(job.context_id)[:8] if job.context_id else output.session_id[:8]
+    filename = f"concept_{context_short}_{date_str.replace('-', '')}.docx"
     await enqueue_message(
         db, BOT_ID, job.chat_id, "send_document",
         make_document_payload(job.chat_id, docx_buf.read(), filename, "📋 Концептуализация случая"),
-        job_id=job.job_id, seq=3,
+        job_id=job.job_id, seq=1,
     )
 
+    # History hint
     await enqueue_message(
         db, BOT_ID, job.chat_id, "send_message",
-        {
-            "chat_id": job.chat_id,
-            "text": "✅ <b>Концептуализация завершена!</b>\n\nЗапустите новую сессию через бот Pro.",
-            "parse_mode": "HTML",
-        },
-        job_id=job.job_id, seq=4,
+        {"chat_id": job.chat_id, "text": "Результат также доступен в Истории результатов в боте @PsycheOS_Pro"},
+        job_id=job.job_id, seq=2,
     )
 
     # Save artifact
