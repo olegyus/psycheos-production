@@ -50,20 +50,20 @@ _ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929"
 _PRE_HYPOTHESES_PROMPT = """\
 Ты - эксперт по психотерапевтической концептуализации в рамках PsycheOS framework.
 
-Задача: на основе данных скрининга и/или интерпретации разработать предварительные гипотезы о системе клиента ДО детальной сессии с терапевтом.
+Задача: на основе данных скрининга и/или интерпретации разработать предварительные гипотезы о состоянии клиента ДО детальной сессии с терапевтом.
 
-# PsycheOS Framework (слои L0-L4):
-- L0: Базовая регуляция (энергия, сон, тело)
-- L1: Рефлексивный контроль (автоматизмы, защиты)
-- L2: Сознательный выбор (произвольная регуляция)
-- L3: Социально-ролевой контроль (отношения, роли)
-- L4: Смыслы и идентичность (ценности, нарратив)
-
-# Типы гипотез:
-- structural: конфигурация системы (как устроено)
-- functional: функция паттерна (зачем)
-- dynamic: механизмы поддержания (петли A→B→C)
+# Внутренняя классификация (используй для JSON-полей, НЕ в текстах):
+- structural: конфигурация (как устроено)
+- functional: функция (зачем)
+- dynamic: механизмы поддержания (петли)
 - managerial: точки управления (где/как можно влиять) ← ОБЯЗАТЕЛЬНО включить хотя бы 1
+
+# КРИТИЧЕСКИ ВАЖНО — язык формулировок:
+- В полях "formulation" и "summary": пиши на профессиональном разговорном языке
+- НЕ используй в тексте: "L0", "L1", "L2", "L3", "L4", "слой", "система", "паттерн системы", "регуляция", "маркер"
+- Говори конкретно о клиенте: "клиент физически истощён и плохо спит", "избегает ситуаций, где нет ясного ответа", "логически понимает что нужно изменить, но не может"
+- Поля "levels" в JSON заполни правильно (L0-L4) — но в сам текст формулировок они не входят
+- "summary" — 2-3 предложения простым языком о том, что видно в данных; специалист должен прочитать и сразу узнать картину
 
 # Задача:
 Создай 2-4 предварительные гипотезы (включая хотя бы 1 managerial) на основе предоставленных данных.
@@ -75,15 +75,55 @@ _PRE_HYPOTHESES_PROMPT = """\
     {
       "type": "structural|functional|dynamic|managerial",
       "levels": ["L0", "L1", ...],
-      "formulation": "чёткая формулировка гипотезы (1-2 предложения)",
+      "formulation": "чёткая формулировка на разговорном языке (1-2 предложения, без L0-L4)",
       "confidence": "weak|working|dominant",
       "reasoning": "на чём основана гипотеза"
     }
   ],
-  "summary": "краткое (2-3 предложения) резюме паттерна на основе данных"
+  "summary": "2-3 предложения о картине случая, простым профессиональным языком"
 }
 
 ОТВЕТ ТОЛЬКО JSON, БЕЗ ДОПОЛНИТЕЛЬНОГО ТЕКСТА.\
+"""
+
+_SOCRATIC_QUESTION_PROMPT = """\
+Ты — опытный супервизор, помогающий специалисту прояснить его концептуализацию случая клиента.
+
+Твоя задача: сформулировать ОДИН конкретный вопрос специалисту.
+
+КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО использовать слова:
+"система", "уровень", "слой", "маркер", "функция паттерна", "регуляция", "L0", "L1", "L2", "L3", "L4"
+Слово "паттерн" заменяй на: "привычка", "реакция", "поведение", "способ справляться"
+
+Правила:
+- Один вопрос. Без вступления. Без пояснений после вопроса.
+- Привязывай к конкретным деталям из описания случая (ситуации, поведение, слова клиента)
+- Говори как коллега-супервизор, а не как система
+- Вопрос адресован специалисту (о его взгляде, ощущениях, оценке) — не клиенту
+
+Как переводить направление в конкретный вопрос:
+
+НАПРАВЛЕНИЕ: level_check
+Спроси, как специалист понимает природу этой реакции — автоматическая она (запускается сама) или осознанная, телесная или смысловая.
+Пример (адаптируй под детали случая): "Вы упомянули [деталь]. Это, как вам кажется, скорее автоматическая реакция — как тело само реагирует — или клиент в этот момент осознаёт что происходит и делает выбор?"
+
+НАПРАВЛЕНИЕ: function_check
+Спроси, что случится или чего опасается клиент, если это изменится. Конкретно, через детали.
+Пример: "Если клиент вдруг перестал бы [конкретное поведение] — что, по вашему ощущению, произошло бы? Чего он, возможно, боится?"
+
+НАПРАВЛЕНИЕ: alternatives_check
+Мягко предложи альтернативное объяснение тех же данных.
+Пример: "Вы смотрите на это как на [суть гипотезы]. А если предположить что дело больше в [альтернатива из контекста] — это что-то меняет в картине?"
+
+НАПРАВЛЕНИЕ: control_check
+Спроси что реально можно начать менять уже сейчас. Конкретно и практично.
+Пример: "Из всего что мы обсудили — что клиент мог бы начать делать иначе уже сейчас, даже небольшой шаг?"
+
+НАПРАВЛЕНИЕ: dynamics_check
+Спроси что поддерживает ситуацию или не даёт ей меняться.
+Пример: "Что, по вашим наблюдениям, не даёт этому меняться? Что подпитывает эту ситуацию?"
+
+Верни ТОЛЬКО текст вопроса. Без кавычек. Без форматирования.\
 """
 
 
@@ -96,6 +136,36 @@ def _parse_json(text: str) -> dict:
     if t.endswith("```"):
         t = t[:-3]
     return json.loads(t.strip())
+
+
+async def _generate_socratic_question(
+    direction: str,
+    hypothesis_formulation: str,
+    specialist_observations: str,
+) -> str | None:
+    """Call Claude to produce one concrete, case-grounded Socratic question.
+
+    Falls back to None so callers can use the template text instead.
+    """
+    user_message = (
+        f"Направление: {direction}\n\n"
+        f"Последняя гипотеза специалиста: {hypothesis_formulation}\n\n"
+        f"Описание случая (что рассказал специалист):\n{specialist_observations[:800]}"
+    )
+    try:
+        client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        resp = await client.messages.create(
+            model=_ANTHROPIC_MODEL,
+            max_tokens=200,
+            system=_SOCRATIC_QUESTION_PROMPT,
+            messages=[{"role": "user", "content": user_message}],
+            timeout=60.0,
+        )
+        q = resp.content[0].text.strip().strip('"').strip("'")
+        return q if q else None
+    except Exception:
+        logger.warning("[worker/concept] Socratic question Claude call failed; using template")
+        return None
 
 
 async def handle_concept_pre_hypotheses(
@@ -170,8 +240,7 @@ async def handle_concept_pre_hypotheses(
         return
 
     # Seed preliminary hypotheses into session
-    _type_emoji = {"structural": "🏗", "functional": "⚙️", "dynamic": "🔄", "managerial": "🎯"}
-    seeded: list[str] = []
+    seeded_lines: list[str] = []
     for hyp_data in data.get("hypotheses", []):
         try:
             hyp_id = f"pre_{session.progress.hypotheses_added + 1:03d}"
@@ -184,15 +253,14 @@ async def handle_concept_pre_hypotheses(
                 foundations=[hyp_data.get("reasoning", "pre-analysis")],
             )
             session.add_hypothesis(hypothesis)
-            emoji = _type_emoji.get(hyp_data["type"], "📝")
-            seeded.append(f"{emoji} <b>{hyp_data['type']}</b>: {hyp_data['formulation']}")
+            seeded_lines.append(f"• {hyp_data['formulation']}")
         except Exception:
             logger.warning("[worker/concept] Could not parse pre-hypothesis: %s", hyp_data)
 
     await _persist_session(db, session, "data_collection", job)
 
     summary = data.get("summary", "")
-    hyp_block = "\n".join(seeded)
+    hyp_block = "\n".join(seeded_lines)
 
     await enqueue_message(
         db, BOT_ID, job.chat_id, "send_message",
@@ -201,11 +269,10 @@ async def handle_concept_pre_hypotheses(
             "text": (
                 "🔍 <b>Предварительный анализ</b>\n\n"
                 f"{summary}\n\n"
-                f"<b>Предварительные гипотезы:</b>\n{hyp_block}\n\n"
+                f"<b>Что уже видно:</b>\n{hyp_block}\n\n"
                 "<b>Теперь расскажите о случае подробнее:</b>\n"
-                "• Основные жалобы клиента\n"
-                "• Ваши наблюдения по слоям (L0–L4)\n"
-                "• Ключевые маркеры поведения\n\n"
+                "Опишите основные жалобы клиента, ваши наблюдения, "
+                "ключевые ситуации.\n\n"
                 "Напишите <b>«готово»</b> когда закончите."
             ),
             "parse_mode": "HTML",
@@ -232,28 +299,12 @@ async def handle_concept_hypothesis(
     hypothesis = await extract_hypothesis_from_response(text, session)
     session.add_hypothesis(hypothesis)
 
-    type_emoji = {
-        "structural": "🏗",
-        "functional": "⚙️",
-        "dynamic": "🔄",
-        "managerial": "🎯",
-    }
-    emoji = type_emoji.get(hypothesis.type.value, "📝")
-    levels_str = ", ".join(lv.value for lv in hypothesis.levels)
-
+    # Minimal confirmation — just acknowledge receipt, no internal labels
     await enqueue_message(
         db, BOT_ID, job.chat_id, "send_message",
         {
             "chat_id": job.chat_id,
-            "text": (
-                f"✅ {emoji} Гипотеза извлечена\n"
-                f"<b>Тип:</b> {hypothesis.type.value}\n"
-                f"<b>Слои:</b> {levels_str}\n"
-                f"<b>Формулировка:</b> {hypothesis.formulation}\n\n"
-                f"<i>Всего гипотез: {len(session.get_active_hypotheses())} "
-                f"(управленческих: {len(session.get_managerial_hypotheses())})</i>"
-            ),
-            "parse_mode": "HTML",
+            "text": f"✅ Принято: {hypothesis.formulation}",
         },
         job_id=job.job_id, seq=0,
     )
@@ -265,10 +316,7 @@ async def handle_concept_hypothesis(
         await _persist_session(db, session, "socratic_dialogue", job)
         await enqueue_message(
             db, BOT_ID, job.chat_id, "send_message",
-            {
-                "chat_id": job.chat_id,
-                "text": f"📋 {reason}\n\n⏳ Формирую концептуализацию...",
-            },
+            {"chat_id": job.chat_id, "text": "⏳ Формирую концептуализацию..."},
             job_id=job.job_id, seq=1,
         )
         await enqueue(
@@ -280,16 +328,24 @@ async def handle_concept_hypothesis(
     else:
         selection = select_next_question(session)
         session.progress.increment_dialogue_turns()
+
+        # Translate the internal direction into a concrete, case-grounded question
+        specialist_observations = (
+            (session.data_map.specialist_observations or "") if session.data_map else ""
+        )
+        concrete_q = await _generate_socratic_question(
+            direction=selection.question_type.value,
+            hypothesis_formulation=hypothesis.formulation,
+            specialist_observations=specialist_observations,
+        )
+        question_text = concrete_q or selection.question_text  # template fallback
+
         await _persist_session(db, session, "socratic_dialogue", job)
         await enqueue_message(
             db, BOT_ID, job.chat_id, "send_message",
             {
                 "chat_id": job.chat_id,
-                "text": (
-                    f"💬 <b>Вопрос {session.progress.dialogue_turns}</b>\n\n"
-                    f"❓ {selection.question_text}"
-                ),
-                "parse_mode": "HTML",
+                "text": f"❓ {question_text}",
             },
             job_id=job.job_id, seq=1,
         )
