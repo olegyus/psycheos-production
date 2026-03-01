@@ -15,6 +15,51 @@ _LOW_VARIANCE_STD_REF = 0.3       # std reference for low-variance normalization
 _STABILITY_STD_REF = 0.5          # std reference for confidence stability
 
 
+def classify_axis_intensity(axis_vector: dict) -> dict:
+    """Classify intensity of each axis score.
+
+    Returns:
+        {axis: "extreme" | "high" | "moderate" | "low"}
+    """
+    result = {}
+    for axis, value in axis_vector.items():
+        abs_val = abs(value)
+        if abs_val >= 0.9:
+            result[axis] = "extreme"
+        elif abs_val >= 0.75:
+            result[axis] = "high"
+        elif abs_val >= 0.5:
+            result[axis] = "moderate"
+        else:
+            result[axis] = "low"
+    return result
+
+
+def detect_regulatory_compression(axis_vector: dict) -> dict:
+    """Detect structural compression patterns in the axis vector.
+
+    Compression features detected:
+        uncertainty_avoidance_extreme — A2 <= -0.9
+        future_horizon_constricted   — A4 <= -0.9
+        reduced_activation           — A1 <= -0.5
+
+    Returns:
+        {"compressed": bool, "features": list[str]}
+    Compressed is True when at least two features are present.
+    """
+    features: list[str] = []
+    if axis_vector.get("A2", 0.0) <= -0.9:
+        features.append("uncertainty_avoidance_extreme")
+    if axis_vector.get("A4", 0.0) <= -0.9:
+        features.append("future_horizon_constricted")
+    if axis_vector.get("A1", 0.0) <= -0.5:
+        features.append("reduced_activation")
+    return {
+        "compressed": len(features) >= 2,
+        "features": features,
+    }
+
+
 def detect_vertical_dominance(axis_vector: dict, dominant_cells: list) -> dict:
     """Detect structural dominance and vertical integration across layers.
 

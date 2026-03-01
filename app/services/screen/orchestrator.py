@@ -24,6 +24,8 @@ from app.models.screening_assessment import ScreeningAssessment
 from app.services.screen import screen_bank
 from app.services.screen.engine import (
     ScreeningEngine,
+    classify_axis_intensity,
+    detect_regulatory_compression,
     detect_vertical_dominance,
     analyze_horizontal_coherence,
 )
@@ -402,8 +404,9 @@ class ScreenOrchestrator:
         state = await self.get_or_create_session_state(assessment_id)
 
         # Extend state with structural signals consumed by report generator
+        axis_vector = state.get("axis_vector", {})
         state["vertical_profile"] = detect_vertical_dominance(
-            state.get("axis_vector", {}), state.get("dominant_cells", [])
+            axis_vector, state.get("dominant_cells", [])
         )
         state["horizontal_profile"] = analyze_horizontal_coherence(
             state.get("tension_matrix", {})
@@ -412,6 +415,8 @@ class ScreenOrchestrator:
             "phase2": state.get("phase2_questions", 0),
             "phase3": state.get("phase3_questions", 0),
         }
+        state["axis_intensity"] = classify_axis_intensity(axis_vector)
+        state["compression_profile"] = detect_regulatory_compression(axis_vector)
 
         result = await report_module.generate_full_report(state, self.client)
 

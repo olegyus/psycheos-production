@@ -101,6 +101,10 @@ INPUT DATA INCLUDES:
     horizontal_profile   — per-layer classification: "polarized" | "conflictive" | "coherent"
     strategy_repetition  — float [0,1]: fraction of responses sharing the same sign pattern
     adaptive_depth       — bool: True if Phase 3 adaptive questioning occurred
+    axis_intensity       — per-axis intensity: "extreme" | "high" | "moderate" | "low"
+    compression_profile  — {compressed: bool, features: list[str]}
+  AxisIntensity — same axis intensity map (direct field for convenience)
+  CompressionProfile — same compression result (direct field for convenience)
   AxisVector, LayerVector, TensionMatrix, RigidityIndex, DominantCells, Confidence
     (raw vectors — do NOT restate numeric values from these fields)
 
@@ -110,6 +114,7 @@ STRICT PROHIBITIONS:
     "degree of involvement", "indicator shows", "value equals".
   - Do NOT evaluate normality, health, or pathology.
   - Do NOT diagnose. Do NOT suggest therapy or clinical intervention.
+  - Do NOT use psychiatric or clinical labels (including "depression", "anxiety disorder").
   - Do NOT use generic filler: "it is worth noting", "as we can see", "clearly".
 
 TRANSLATION RULES (apply these when writing):
@@ -129,19 +134,44 @@ TRANSLATION RULES (apply these when writing):
     Write: at this level, opposing regulatory tendencies are simultaneously active.
   If horizontal_profile[layer] == "coherent":
     Write: at this level, regulation is distributed without strong directional pull.
-  If strategy_repetition > 0.5:
-    Write: the system shows consistent preference for a recurring regulatory strategy,
-    which increases stability but may constrain variability.
   If adaptive_depth == True:
     Write: the profile was refined through adaptive clarification and reflects
     stabilised structural signals.
   If Confidence < 0.85:
     Write: residual structural uncertainty remains; some zones require further clarification.
 
+INTENSITY RULES (apply when describing the central axis):
+  If axis_intensity[central_axis] == "extreme":
+    Describe the dominance as pronounced, structurally strong, or highly consolidated.
+    Use language such as: "strongly consolidated", "markedly dominant", "structurally fixed".
+  If axis_intensity[central_axis] == "high":
+    Describe as clearly dominant but not total.
+    Use language such as: "clearly prominent", "consistently present across contexts".
+  If axis_intensity[central_axis] is "moderate" or "low":
+    Describe as a tendency or leaning rather than a fixed pattern.
+  Never use numeric language to characterise intensity (no "very high", "8 out of 10").
+
+COMPRESSION RULES (apply when CompressionProfile.compressed == True):
+  Explicitly describe ALL of the following that apply based on CompressionProfile.features:
+  - If "reduced_activation" is in features:
+      Describe that availability of mobilisation energy is low; the system operates
+      with reduced drive for initiation and activation.
+  - If "future_horizon_constricted" is in features:
+      Describe that forward-looking orientation is strongly constricted; regulatory
+      behaviour is structured primarily around the immediate rather than extended horizons.
+  - If "uncertainty_avoidance_extreme" is in features:
+      Describe that the structural push away from open or unresolved situations is extreme;
+      the system shows a strong and consistent pull toward closure and predictability.
+  When compressed == True:
+  - Explicitly describe the narrowing of regulatory range across the system.
+  - Do NOT normalise compression as flexibility, balance, or stability.
+  - Do NOT diagnose. Do NOT use psychiatric labels.
+
 OUTPUT — produce EXACTLY these 6 sections in Russian:
 
 ## 1. Центральная ось регуляции
 Identify the dominant axis (if present) and describe its functional meaning in lived terms.
+Apply INTENSITY RULES to characterise how pronounced the dominance is.
 If no dominant axis, describe distributed organisation.
 
 ## 2. Тип структурной организации
@@ -153,10 +183,15 @@ For each layer that is polarized or conflictive, describe what this means functi
 Coherent layers may be grouped in a single sentence.
 
 ## 4. Регуляторная гибкость
-Describe strategy_repetition in behavioural terms. Describe rigidity without restating numbers.
+Describe regulatory flexibility honestly.
+If CompressionProfile.compressed == True: explicitly state that the range of regulatory
+movement is reduced, and describe each compression feature present. Do not frame this as
+balanced or functional.
+If compressed == False: describe strategy_repetition in behavioural terms.
 
 ## 5. Структурное резюме
 Concise synthesis of the profile as a regulatory dynamic (maximum 120 words).
+If compressed, the summary must reflect structural narrowing without softening.
 Suitable for discussion with the client after the session.
 
 ## 6. Методологическая заметка
@@ -213,13 +248,19 @@ INPUT INCLUDES:
     strategy_repetition — float [0,1]
     adaptive_depth      — bool
   Confidence — float in [0, 1]
+  CompressionProfile — {compressed: bool, features: list[str]}
+    features may include: "reduced_activation", "future_horizon_constricted",
+    "uncertainty_avoidance_extreme"
 
 STRICT PROHIBITIONS:
   - Do NOT use any of: axis, layer, vertical integration, regulation mechanism,
     polarization, conflictive, coherence, AxisVector, tension matrix, score.
   - Do NOT restate numeric values.
   - Do NOT diagnose, pathologize, or suggest treatment.
+  - Do NOT use psychiatric or clinical labels (including "depression", "anxiety").
   - Do NOT mention phases, algorithms, or screening steps.
+  - If CompressionProfile.compressed == True: do NOT describe the profile as flexible,
+    balanced, or adaptive. Do NOT falsely reassure.
 
 TRANSLATION RULES:
   If central_axis == "A1":
@@ -237,28 +278,51 @@ TRANSLATION RULES:
     This pattern runs through multiple areas of the person's functioning simultaneously —
     it is not situational but structural.
   If strategy_repetition > 0.5:
-    The person tends to return to familiar approaches when managing situations;
-    this brings stability but may reduce variety of response.
+    The person tends to return to familiar approaches when managing situations.
   If adaptive_depth == True:
     The profile shows nuance that emerged through a more detailed clarification process,
     suggesting a complex and individually specific style.
   If Confidence < 0.85:
     Some aspects of the profile remain open and may become clearer through conversation.
 
+COMPRESSION RULES (apply when CompressionProfile.compressed == True):
+  Gently but honestly reflect each present feature in lived, non-technical terms:
+  - If "reduced_activation" is in features:
+      Describe a sense of lowered energy or reduced readiness to initiate things.
+      Do not frame this as rest or recovery — describe it as a sustained state.
+  - If "future_horizon_constricted" is in features:
+      Describe difficulty imagining or connecting to what lies ahead;
+      attention tends to stay close to the present or near-term.
+  - If "uncertainty_avoidance_extreme" is in features:
+      Describe a strong pull toward clarity and predictability; open-ended situations
+      feel particularly hard to stay with.
+  When compressed == True:
+  - The overall tone must reflect that the person is currently operating within a
+    narrower range than is typical. Remain humane and non-judgmental.
+  - Do NOT present this state as balance or flexibility.
+  - Do NOT suggest this is permanent or unchangeable.
+
 OUTPUT — produce EXACTLY these 5 sections in Russian:
 
 ## 1. Основная особенность
 Describe in 2–3 sentences how this person tends to operate.
 Use "вы" (second person). Grounded, concrete, recognisable.
+If compressed, ground this in the weight and narrowing, not in strength.
 
 ## 2. В чём сила этого стиля
-One strength this pattern creates in daily life (1–2 sentences).
+One genuine strength this pattern creates (1–2 sentences).
+If compressed, name a real functional quality without overstating it.
 
 ## 3. Возможное ограничение
-One way this pattern may constrain flexibility — framed gently, without judgment (1–2 sentences).
+One way this pattern currently constrains range — framed honestly but without judgment (1–2 sentences).
+If compressed, describe the narrowing directly. Do not soften it into "flexibility".
 
 ## 4. О гибкости
-Comment on consistency of strategy in neutral terms (1–2 sentences).
+If CompressionProfile.compressed == True:
+  Describe that the person currently operates within a reduced range of response,
+  without framing this as balance or stability. Remain gentle.
+If compressed == False:
+  Comment on consistency of strategy in neutral terms (1–2 sentences).
 
 ## 5. Завершение
 A brief neutral closing that frames this as a starting point, not a verdict (1–2 sentences).
