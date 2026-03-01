@@ -281,7 +281,7 @@ async def handle_concept_pre_hypotheses(
     )
     logger.info(
         "[worker/concept] pre_hypotheses complete chat=%s seeded=%d",
-        job.chat_id, len(seeded),
+        job.chat_id, len(seeded_lines),
     )
 
 
