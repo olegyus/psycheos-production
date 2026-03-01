@@ -198,17 +198,34 @@ def format_to_txt(data: Dict[str, Any]) -> str:
         "meaning_and_purpose": "Смысл и цель",
         "resource_management": "Управление ресурсами",
     }
-    domains = focus.get("domains", [])
-    if domains:
-        lines.append("Домены:")
-        for d in domains:
-            lines.append(f"  • {domain_names.get(d, d)}")
 
-    indicators = focus.get("indicators", [])
-    if indicators:
-        lines += ["", "Индикаторы:"]
-        for ind in indicators:
-            lines.append(f"  • {ind}")
+    if isinstance(focus, str):
+        if focus:
+            lines.append(focus)
+    elif isinstance(focus, list):
+        for item in focus:
+            lines.append(f"  • {item}" if isinstance(item, str) else f"  • {str(item)}")
+    elif isinstance(focus, dict):
+        domains = focus.get("domains", [])
+        if domains:
+            lines.append("Домены:")
+            for d in domains:
+                lines.append(f"  • {domain_names.get(d, d)}")
+
+        indicators = focus.get("indicators", [])
+        if indicators:
+            lines += ["", "Индикаторы:"]
+            for ind in indicators:
+                lines.append(f"  • {ind}")
+
+        # Fallback: any other string/list values Claude put in this dict
+        if not domains and not indicators:
+            for val in focus.values():
+                if isinstance(val, str) and val:
+                    lines.append(f"  {val}")
+                elif isinstance(val, list):
+                    for item in val:
+                        lines.append(f"  • {item}" if isinstance(item, str) else f"  • {str(item)}")
 
     lines += ["", "-" * 80, ""]
 
