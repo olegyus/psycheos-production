@@ -129,15 +129,25 @@ def format_to_txt(data: Dict[str, Any]) -> str:
 
     # ── Phenomenological summary ──────────────────────────────────────────────
     phenom = data.get("phenomenological_summary", {})
-    lines += ["ФЕНОМЕНОЛОГИЧЕСКОЕ ОПИСАНИЕ", "", phenom.get("text", "N/A")]
+    if isinstance(phenom, dict):
+        lines += ["ФЕНОМЕНОЛОГИЧЕСКОЕ ОПИСАНИЕ", "", phenom.get("text", "N/A")]
+        key_elements = phenom.get("key_elements", [])
+    else:
+        # Claude returned phenomenological_summary as a list of strings
+        lines += ["ФЕНОМЕНОЛОГИЧЕСКОЕ ОПИСАНИЕ", ""]
+        key_elements = phenom if isinstance(phenom, list) else []
 
-    key_elements = phenom.get("key_elements", [])
     if key_elements:
         lines += ["", "Ключевые элементы:"]
         for elem in key_elements:
-            lines.append(f"  • [{elem.get('prominence', 'N/A').upper()}] {elem.get('element', 'N/A')}")
-            if elem.get("description"):
-                lines.append(f"    {elem['description']}")
+            if isinstance(elem, dict):
+                lines.append(f"  • [{elem.get('prominence', 'N/A').upper()}] {elem.get('element', 'N/A')}")
+                if elem.get("description"):
+                    lines.append(f"    {elem['description']}")
+            elif isinstance(elem, str):
+                lines.append(f"  • {elem}")
+            else:
+                lines.append(f"  • {str(elem)}")
 
     lines += ["", "-" * 80, ""]
 
@@ -149,24 +159,29 @@ def format_to_txt(data: Dict[str, Any]) -> str:
         lines.append("(Недостаточно данных для формулировки гипотез)")
     else:
         for i, hyp in enumerate(hypotheses, 1):
-            lines += [f"ГИПОТЕЗА {i}", "", hyp.get("hypothesis_text", "N/A"), ""]
+            if isinstance(hyp, dict):
+                lines += [f"ГИПОТЕЗА {i}", "", hyp.get("hypothesis_text", "N/A"), ""]
 
-            evidence = hyp.get("supporting_evidence", [])
-            if evidence:
-                lines.append("Поддерживающие элементы:")
-                for ev in evidence:
-                    lines.append(f"  • {ev}")
-                lines.append("")
+                evidence = hyp.get("supporting_evidence", [])
+                if evidence:
+                    lines.append("Поддерживающие элементы:")
+                    for ev in evidence:
+                        lines.append(f"  • {ev}")
+                    lines.append("")
 
-            if hyp.get("limitations"):
-                lines += ["Ограничения:", f"  {hyp['limitations']}", ""]
+                if hyp.get("limitations"):
+                    lines += ["Ограничения:", f"  {hyp['limitations']}", ""]
 
-            alternatives = hyp.get("alternatives", [])
-            if alternatives:
-                lines.append("Альтернативные интерпретации:")
-                for alt in alternatives:
-                    lines.append(f"  • {alt}")
-                lines.append("")
+                alternatives = hyp.get("alternatives", [])
+                if alternatives:
+                    lines.append("Альтернативные интерпретации:")
+                    for alt in alternatives:
+                        lines.append(f"  • {alt}")
+                    lines.append("")
+            elif isinstance(hyp, str):
+                lines += [f"ГИПОТЕЗА {i}", "", hyp, ""]
+            else:
+                lines += [f"ГИПОТЕЗА {i}", "", str(hyp), ""]
 
     lines += ["-" * 80, ""]
 
@@ -212,12 +227,17 @@ def format_to_txt(data: Dict[str, Any]) -> str:
         }
         lines += ["КОМПЕНСАТОРНЫЕ ПАТТЕРНЫ", ""]
         for patt in patterns:
-            lines.append(
-                f"• {pattern_names.get(patt.get('pattern', ''), patt.get('pattern', 'N/A'))} "
-                f"({patt.get('confidence', 'N/A')})"
-            )
-            if patt.get("evidence"):
-                lines.append(f"  {patt['evidence']}")
+            if isinstance(patt, dict):
+                lines.append(
+                    f"• {pattern_names.get(patt.get('pattern', ''), patt.get('pattern', 'N/A'))} "
+                    f"({patt.get('confidence', 'N/A')})"
+                )
+                if patt.get("evidence"):
+                    lines.append(f"  {patt['evidence']}")
+            elif isinstance(patt, str):
+                lines.append(f"• {patt}")
+            else:
+                lines.append(f"• {str(patt)}")
             lines.append("")
         lines += ["-" * 80, ""]
 
@@ -249,11 +269,16 @@ def format_to_txt(data: Dict[str, Any]) -> str:
     if directions:
         lines += ["НАПРАВЛЕНИЯ ДЛЯ УТОЧНЕНИЯ", ""]
         for direction in directions:
-            lines.append(
-                f"[{direction.get('priority', 'medium').upper()}] {direction.get('direction', '')}"
-            )
-            if direction.get("rationale"):
-                lines.append(f"  Обоснование: {direction['rationale']}")
+            if isinstance(direction, dict):
+                lines.append(
+                    f"[{direction.get('priority', 'medium').upper()}] {direction.get('direction', '')}"
+                )
+                if direction.get("rationale"):
+                    lines.append(f"  Обоснование: {direction['rationale']}")
+            elif isinstance(direction, str):
+                lines.append(direction)
+            else:
+                lines.append(str(direction))
             lines.append("")
 
     # ── Footer ────────────────────────────────────────────────────────────────
