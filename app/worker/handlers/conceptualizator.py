@@ -13,6 +13,7 @@ concept_hypothesis additionally:
   message_text  str  — the specialist's message to extract hypothesis from
 """
 import logging
+from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Bot
@@ -28,8 +29,9 @@ from app.services.conceptualizer.decision_policy import (
 from app.services.conceptualizer.enums import SessionStateEnum
 from app.services.conceptualizer.models import SessionState
 from app.services.conceptualizer.output import assemble_output
+from app.services.conceptualizer.report import generate_concept_docx
 from app.services.job_queue import enqueue
-from app.services.outbox import enqueue_message
+from app.services.outbox import enqueue_message, make_document_payload
 from app.webhooks.common import upsert_chat_state
 
 logger = logging.getLogger(__name__)
@@ -175,6 +177,16 @@ async def handle_concept_output(
         job_id=job.job_id, seq=2,
     )
 
+    # DOCX report
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    docx_buf = generate_concept_docx(output, meta={"date": date_str})
+    filename = f"concept_{output.session_id[:8]}_{date_str.replace('-', '')}.docx"
+    await enqueue_message(
+        db, BOT_ID, job.chat_id, "send_document",
+        make_document_payload(job.chat_id, docx_buf.read(), filename, "📋 Концептуализация случая"),
+        job_id=job.job_id, seq=3,
+    )
+
     await enqueue_message(
         db, BOT_ID, job.chat_id, "send_message",
         {
@@ -182,7 +194,7 @@ async def handle_concept_output(
             "text": "✅ <b>Концептуализация завершена!</b>\n\nЗапустите новую сессию через бот Pro.",
             "parse_mode": "HTML",
         },
-        job_id=job.job_id, seq=3,
+        job_id=job.job_id, seq=4,
     )
 
     # Save artifact
