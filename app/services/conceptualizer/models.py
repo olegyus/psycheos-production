@@ -65,6 +65,9 @@ class SessionState(BaseModel):
     red_flags: List[RedFlag] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # Prior artifact context (populated from Screen / Interpreter artifacts at session start)
+    screen_context: Optional[str] = None
+    interpreter_context: Optional[str] = None
 
     def add_hypothesis(self, hypothesis: Hypothesis) -> None:
         self.hypotheses.append(hypothesis)

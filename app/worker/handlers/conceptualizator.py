@@ -2,8 +2,9 @@
 Worker handlers for Conceptualizator bot async jobs.
 
 job_types:
-  concept_hypothesis — extract hypothesis from specialist message; ask next question
-  concept_output     — assemble three-layer output (A/B/C) and send results
+  concept_pre_hypotheses — generate preliminary hypotheses from Screen/Interpreter artifacts
+  concept_hypothesis     — extract hypothesis from specialist message; ask next question
+  concept_output         — assemble three-layer output (A/B/C) and send results
 
 job.payload keys:
   session  dict  — SessionState.model_dump(mode="json")
@@ -12,9 +13,11 @@ job.payload keys:
 concept_hypothesis additionally:
   message_text  str  — the specialist's message to extract hypothesis from
 """
+import json
 import logging
 from datetime import datetime, timezone
 
+from anthropic import AsyncAnthropic
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Bot
 
@@ -26,8 +29,13 @@ from app.services.conceptualizer.decision_policy import (
     select_next_question,
     should_continue_dialogue,
 )
-from app.services.conceptualizer.enums import SessionStateEnum
-from app.services.conceptualizer.models import SessionState
+from app.services.conceptualizer.enums import (
+    ConfidenceLevel,
+    HypothesisType,
+    PsycheLevelEnum,
+    SessionStateEnum,
+)
+from app.services.conceptualizer.models import Hypothesis, SessionState
 from app.services.conceptualizer.output import assemble_output
 from app.services.conceptualizer.report import generate_concept_docx
 from app.services.job_queue import enqueue
@@ -37,6 +45,177 @@ from app.webhooks.common import upsert_chat_state
 logger = logging.getLogger(__name__)
 
 BOT_ID = "conceptualizator"
+_ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929"
+
+_PRE_HYPOTHESES_PROMPT = """\
+Ты - эксперт по психотерапевтической концептуализации в рамках PsycheOS framework.
+
+Задача: на основе данных скрининга и/или интерпретации разработать предварительные гипотезы о системе клиента ДО детальной сессии с терапевтом.
+
+# PsycheOS Framework (слои L0-L4):
+- L0: Базовая регуляция (энергия, сон, тело)
+- L1: Рефлексивный контроль (автоматизмы, защиты)
+- L2: Сознательный выбор (произвольная регуляция)
+- L3: Социально-ролевой контроль (отношения, роли)
+- L4: Смыслы и идентичность (ценности, нарратив)
+
+# Типы гипотез:
+- structural: конфигурация системы (как устроено)
+- functional: функция паттерна (зачем)
+- dynamic: механизмы поддержания (петли A→B→C)
+- managerial: точки управления (где/как можно влиять) ← ОБЯЗАТЕЛЬНО включить хотя бы 1
+
+# Задача:
+Создай 2-4 предварительные гипотезы (включая хотя бы 1 managerial) на основе предоставленных данных.
+
+# Формат ответа (JSON):
+
+{
+  "hypotheses": [
+    {
+      "type": "structural|functional|dynamic|managerial",
+      "levels": ["L0", "L1", ...],
+      "formulation": "чёткая формулировка гипотезы (1-2 предложения)",
+      "confidence": "weak|working|dominant",
+      "reasoning": "на чём основана гипотеза"
+    }
+  ],
+  "summary": "краткое (2-3 предложения) резюме паттерна на основе данных"
+}
+
+ОТВЕТ ТОЛЬКО JSON, БЕЗ ДОПОЛНИТЕЛЬНОГО ТЕКСТА.\
+"""
+
+
+def _parse_json(text: str) -> dict:
+    t = text.strip()
+    if t.startswith("```json"):
+        t = t[7:]
+    if t.startswith("```"):
+        t = t[3:]
+    if t.endswith("```"):
+        t = t[:-3]
+    return json.loads(t.strip())
+
+
+async def handle_concept_pre_hypotheses(
+    job: Job, db: AsyncSession, bots: dict[str, Bot],
+) -> None:
+    """
+    Generate preliminary hypotheses from Screen + Interpreter artifact data.
+    Seeds them into the session, sends a summary message, then asks for case description.
+    """
+    p = job.payload
+    session = SessionState.model_validate(p["session"])
+
+    context_parts = []
+    if session.screen_context:
+        context_parts.append(f"## Данные скрининга (Screen):\n{session.screen_context}")
+    if session.interpreter_context:
+        context_parts.append(f"## Данные интерпретации (Interpreter):\n{session.interpreter_context}")
+
+    if not context_parts:
+        # No context available — just ask for description directly
+        await enqueue_message(
+            db, BOT_ID, job.chat_id, "send_message",
+            {
+                "chat_id": job.chat_id,
+                "text": (
+                    "✅ Сессия готова к работе.\n\n"
+                    "<b>Этап 1: Сбор данных</b>\n"
+                    "Опишите случай клиента:\n"
+                    "• Основные жалобы\n"
+                    "• Наблюдения по слоям (L0–L4)\n"
+                    "• Ключевые маркеры\n\n"
+                    "Напишите <b>«готово»</b> когда закончите."
+                ),
+                "parse_mode": "HTML",
+            },
+            job_id=job.job_id, seq=0,
+        )
+        return
+
+    user_message = "\n\n".join(context_parts) + "\n\nСгенерируй предварительные гипотезы."
+
+    try:
+        client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        resp = await client.messages.create(
+            model=_ANTHROPIC_MODEL,
+            max_tokens=2000,
+            system=_PRE_HYPOTHESES_PROMPT,
+            messages=[{"role": "user", "content": user_message}],
+            timeout=120.0,
+        )
+        data = _parse_json(resp.content[0].text)
+    except Exception:
+        logger.exception("[worker/concept] pre_hypotheses Claude error")
+        await enqueue_message(
+            db, BOT_ID, job.chat_id, "send_message",
+            {
+                "chat_id": job.chat_id,
+                "text": (
+                    "✅ Сессия готова к работе.\n\n"
+                    "<b>Этап 1: Сбор данных</b>\n"
+                    "Опишите случай клиента:\n"
+                    "• Основные жалобы\n"
+                    "• Наблюдения по слоям (L0–L4)\n"
+                    "• Ключевые маркеры\n\n"
+                    "Напишите <b>«готово»</b> когда закончите."
+                ),
+                "parse_mode": "HTML",
+            },
+            job_id=job.job_id, seq=0,
+        )
+        await _persist_session(db, session, "data_collection", job)
+        return
+
+    # Seed preliminary hypotheses into session
+    _type_emoji = {"structural": "🏗", "functional": "⚙️", "dynamic": "🔄", "managerial": "🎯"}
+    seeded: list[str] = []
+    for hyp_data in data.get("hypotheses", []):
+        try:
+            hyp_id = f"pre_{session.progress.hypotheses_added + 1:03d}"
+            hypothesis = Hypothesis(
+                id=hyp_id,
+                type=HypothesisType(hyp_data["type"]),
+                levels=[PsycheLevelEnum(lv) for lv in hyp_data["levels"]],
+                formulation=hyp_data["formulation"],
+                confidence=ConfidenceLevel(hyp_data["confidence"]),
+                foundations=[hyp_data.get("reasoning", "pre-analysis")],
+            )
+            session.add_hypothesis(hypothesis)
+            emoji = _type_emoji.get(hyp_data["type"], "📝")
+            seeded.append(f"{emoji} <b>{hyp_data['type']}</b>: {hyp_data['formulation']}")
+        except Exception:
+            logger.warning("[worker/concept] Could not parse pre-hypothesis: %s", hyp_data)
+
+    await _persist_session(db, session, "data_collection", job)
+
+    summary = data.get("summary", "")
+    hyp_block = "\n".join(seeded)
+
+    await enqueue_message(
+        db, BOT_ID, job.chat_id, "send_message",
+        {
+            "chat_id": job.chat_id,
+            "text": (
+                "🔍 <b>Предварительный анализ</b>\n\n"
+                f"{summary}\n\n"
+                f"<b>Предварительные гипотезы:</b>\n{hyp_block}\n\n"
+                "<b>Теперь расскажите о случае подробнее:</b>\n"
+                "• Основные жалобы клиента\n"
+                "• Ваши наблюдения по слоям (L0–L4)\n"
+                "• Ключевые маркеры поведения\n\n"
+                "Напишите <b>«готово»</b> когда закончите."
+            ),
+            "parse_mode": "HTML",
+        },
+        job_id=job.job_id, seq=0,
+    )
+    logger.info(
+        "[worker/concept] pre_hypotheses complete chat=%s seeded=%d",
+        job.chat_id, len(seeded),
+    )
 
 
 async def handle_concept_hypothesis(

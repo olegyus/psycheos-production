@@ -143,7 +143,7 @@ async def _start_session(
     # Query existing artifacts for this context (Screen / Interpreter results)
     try:
         art_result = await db.execute(
-            select(Artifact.service_id, Artifact.summary)
+            select(Artifact.service_id, Artifact.summary, Artifact.payload)
             .where(Artifact.context_id == token.context_id)
             .order_by(Artifact.created_at.desc())
         )
@@ -153,33 +153,49 @@ async def _start_session(
         existing_artifacts = []
 
     artifact_lines: list[str] = []
+    screen_context: str | None = None
+    interpreter_context: str | None = None
     _service_emoji = {"screen": "📊 Скрининг", "interpretator": "🧠 Интерпретация"}
-    for svc_id, svc_summary in existing_artifacts:
+
+    for svc_id, svc_summary, svc_payload in existing_artifacts:
         label = _service_emoji.get(svc_id, svc_id)
         short = (svc_summary or "").split(".")[0][:60]
         artifact_lines.append(f"• {label}: {short}" if short else f"• {label}")
 
-    artifact_block = ""
-    if artifact_lines:
-        artifact_block = (
-            "\n\n<b>Данные по кейсу:</b>\n" + "\n".join(artifact_lines)
-        )
+        if svc_id == "screen" and svc_payload and screen_context is None:
+            try:
+                structural = (svc_payload.get("report_json") or {}).get("structural_report", "")
+                if structural:
+                    screen_context = structural[:2000]
+            except Exception:
+                logger.warning("[%s] Could not extract screen context", BOT_ID)
+
+        elif svc_id == "interpretator" and svc_payload and interpreter_context is None:
+            try:
+                txt = svc_payload.get("txt_report", "")
+                if txt:
+                    interpreter_context = txt[:2000]
+            except Exception:
+                logger.warning("[%s] Could not extract interpreter context", BOT_ID)
 
     try:
         session = SessionState(
             session_id=f"cnc_{chat_id}_{str(token.run_id).replace('-', '')[:8]}",
             specialist_id=str(user_id or chat_id),
+            screen_context=screen_context,
+            interpreter_context=interpreter_context,
         )
         # Skip INIT → go straight to DATA_COLLECTION
         session.transition_to(SessionStateEnum.DATA_COLLECTION)
 
+        run_id_str = str(token.jti)
         await upsert_chat_state(
             db,
             bot_id=BOT_ID,
             chat_id=chat_id,
             state="data_collection",
             state_payload={
-                "run_id": str(token.jti),   # jti = billing key (matches reserve_stars in pro.py)
+                "run_id": run_id_str,   # jti = billing key (matches reserve_stars in pro.py)
                 "session": session.model_dump(mode="json"),
             },
             user_id=user_id,
@@ -198,21 +214,44 @@ async def _start_session(
         f"[{BOT_ID}] Session started: user={user_id} "
         f"context={token.context_id} run_id={token.run_id}"
     )
-    await bot.send_message(
-        chat_id=chat_id,
-        text=(
-            "🎯 <b>PsycheOS Conceptualizer</b>\n\n"
-            "Сессия открыта."
-            f"{artifact_block}\n\n"
-            "<b>Этап 1: Сбор данных</b>\n"
-            "Опишите случай клиента:\n"
-            "• Основные жалобы\n"
-            "• Наблюдения по слоям (L0–L4)\n"
-            "• Ключевые маркеры\n\n"
-            "Напишите <b>«готово»</b> когда закончите."
-        ),
-        parse_mode="HTML",
-    )
+
+    artifact_block = ""
+    if artifact_lines:
+        artifact_block = "\n\n<b>Данные по кейсу:</b>\n" + "\n".join(artifact_lines)
+
+    has_prior_data = bool(screen_context or interpreter_context)
+    if has_prior_data:
+        await enqueue(
+            db, "concept_pre_hypotheses", BOT_ID, chat_id,
+            payload={"session": session.model_dump(mode="json"), "role": token.role},
+            user_id=user_id, context_id=token.context_id, run_id=run_id_str,
+        )
+        await bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "🎯 <b>PsycheOS Conceptualizer</b>\n\n"
+                "Сессия открыта."
+                f"{artifact_block}\n\n"
+                "⏳ Анализирую данные кейса..."
+            ),
+            parse_mode="HTML",
+        )
+    else:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "🎯 <b>PsycheOS Conceptualizer</b>\n\n"
+                "Сессия открыта."
+                f"{artifact_block}\n\n"
+                "<b>Этап 1: Сбор данных</b>\n"
+                "Опишите случай клиента:\n"
+                "• Основные жалобы\n"
+                "• Наблюдения по слоям (L0–L4)\n"
+                "• Ключевые маркеры\n\n"
+                "Напишите <b>«готово»</b> когда закончите."
+            ),
+            parse_mode="HTML",
+        )
 
 
 # ── Message routing ────────────────────────────────────────────────────────────
