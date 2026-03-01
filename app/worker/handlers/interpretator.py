@@ -377,19 +377,27 @@ async def handle_interp_run(
         if repair_attempts < _MAX_REPAIR_ATTEMPTS:
             output, _ = _policy.repair(output, validation)
 
-    # Schema validation
+    # Schema validation — optional fields are injected with defaults inside the call.
+    # Only block delivery if truly essential fields (hypotheses / summary) are absent.
     valid, errors = validate_structured_results(output)
     if not valid:
-        logger.warning("[worker/interp] structure validation failed: %s", errors)
-        await enqueue_message(
-            db, BOT_ID, job.chat_id, "send_message",
-            {
-                "chat_id": job.chat_id,
-                "text": "⚠ Ошибка структуры результата. Запустите новую сессию через Pro.",
-            },
-            job_id=job.job_id, seq=0,
-        )
-        return
+        fatal = [
+            e for e in errors
+            if "interpretative_hypotheses" in e or "phenomenological_summary" in e
+        ]
+        if fatal:
+            logger.error("[worker/interp] fatal validation failure: %s", fatal)
+            await enqueue_message(
+                db, BOT_ID, job.chat_id, "send_message",
+                {
+                    "chat_id": job.chat_id,
+                    "text": "⚠ Ошибка структуры результата. Запустите новую сессию через Pro.",
+                },
+                job_id=job.job_id, seq=0,
+            )
+            return
+        # Non-fatal issues — log and continue delivering the result
+        logger.warning("[worker/interp] structure validation warnings (proceeding): %s", errors)
 
     # Format and enqueue documents
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")

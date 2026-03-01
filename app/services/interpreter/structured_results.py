@@ -8,23 +8,42 @@ Key difference from standalone bot:
 """
 from typing import Any, Dict, Tuple
 
+# Fields that Claude may omit without losing interpretive value.
+# Applied as defaults before any validation so downstream code always
+# has these keys available.
+_OPTIONAL_DEFAULTS: dict[str, Any] = {
+    "clarification_directions": [],
+    "policy_flags": [],
+    "compensatory_patterns": [],
+    "uncertainty_profile": {"level": "moderate", "factors": []},
+}
+
+# Only these fields make the result meaningless if absent.
+_REQUIRED_FIELDS = [
+    "meta", "input_summary", "phenomenological_summary",
+    "interpretative_hypotheses", "focus_of_tension",
+]
+
 
 def validate_structured_results(data: Dict[str, Any]) -> Tuple[bool, list[str]]:
     """
     Validate Structured Results JSON against schema.
 
+    Optional fields (clarification_directions, policy_flags,
+    compensatory_patterns, uncertainty_profile) are injected with safe
+    defaults if absent — they do not cause validation failure.
+
     Returns:
         (is_valid, list_of_errors)
     """
+    # Inject defaults for optional fields in-place so format_to_txt works
+    for field, default in _OPTIONAL_DEFAULTS.items():
+        if field not in data:
+            data[field] = default
+
     errors: list[str] = []
 
-    required_fields = [
-        "meta", "input_summary", "phenomenological_summary",
-        "interpretative_hypotheses", "focus_of_tension",
-        "compensatory_patterns", "uncertainty_profile",
-        "clarification_directions", "policy_flags",
-    ]
-    for field in required_fields:
+    for field in _REQUIRED_FIELDS:
         if field not in data:
             errors.append(f"Missing required field: {field}")
 
@@ -41,10 +60,6 @@ def validate_structured_results(data: Dict[str, Any]) -> Tuple[bool, list[str]]:
         errors.append(f"LOW_DATA mode allows max 1 hypothesis, got {len(hypotheses)}")
     elif mode == "STANDARD" and len(hypotheses) > 3:
         errors.append(f"STANDARD mode allows max 3 hypotheses, got {len(hypotheses)}")
-
-    profile = data.get("uncertainty_profile", {})
-    if not profile.get("data_gaps") and not profile.get("ambiguities"):
-        errors.append("Uncertainty profile lacks substantive content")
 
     return len(errors) == 0, errors
 
