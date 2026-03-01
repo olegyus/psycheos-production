@@ -100,6 +100,8 @@ def build_structural_summary(data: dict) -> dict:
         "horizontal_profile": data.get("horizontal_profile", {}),
         "strategy_repetition": data.get("rigidity", {}).get("strategy_repetition", 0.0),
         "adaptive_depth": data.get("phase_depth", {}).get("phase3", 0) > 0,
+        "axis_intensity": data.get("axis_intensity", {}),
+        "compression_profile": data.get("compression_profile", {"compressed": False, "features": []}),
     }
 
 
@@ -116,6 +118,7 @@ async def generate_client_summary(state: dict, claude_client) -> str:
     context = {
         "StructuralSummary": structural_summary,
         "Confidence": state.get("confidence", 0.0),
+        "CompressionProfile": structural_summary.get("compression_profile", {"compressed": False, "features": []}),
     }
     user_content = assemble_prompt("client_report", context)
     result = await _call_claude(
@@ -156,6 +159,8 @@ async def generate_full_report(state: dict, claude_client) -> dict:
         "DominantCells": state.get("dominant_cells", []),
         "Confidence": state.get("confidence", 0.0),
         "StructuralSummary": structural_summary,
+        "AxisIntensity": structural_summary.get("axis_intensity", {}),
+        "CompressionProfile": structural_summary.get("compression_profile", {"compressed": False, "features": []}),
     }
     report_user = assemble_prompt("report", report_context)
     structural_report = await _call_claude(
@@ -217,6 +222,8 @@ async def generate_full_report(state: dict, claude_client) -> dict:
         "vertical_profile": state.get("vertical_profile", {}),
         "horizontal_profile": state.get("horizontal_profile", {}),
         "phase_depth": state.get("phase_depth", {}),
+        "axis_intensity": structural_summary.get("axis_intensity", {}),
+        "compression_profile": structural_summary.get("compression_profile", {"compressed": False, "features": []}),
     }
 
     report_text = format_report_txt(report_json)
