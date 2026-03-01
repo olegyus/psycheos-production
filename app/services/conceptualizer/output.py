@@ -263,7 +263,7 @@ async def _assemble_layer_a(session: SessionState) -> LayerA:
 
     hypotheses = session.get_active_hypotheses()
     supporting_points = [
-        f"{h.type.value}: {h.formulation[:100]}"
+        f"{h.type.value}: {h.formulation}"
         for h in hypotheses[:4]
         if h.formulation != data["leading_formulation"]
     ]

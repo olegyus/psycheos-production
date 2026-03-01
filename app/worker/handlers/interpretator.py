@@ -370,6 +370,19 @@ async def handle_interp_run(
             )
         return
 
+    # Patch meta fields if Claude left them empty (session_id, timestamp, mode
+    # are known to the worker but Claude may echo "string" or omit them).
+    output.setdefault("meta", {})
+    _meta = output["meta"]
+    if not _meta.get("session_id") or _meta.get("session_id") == "string":
+        _meta["session_id"] = session_id
+    if not _meta.get("timestamp"):
+        _meta["timestamp"] = datetime.now(timezone.utc).isoformat()
+    if not _meta.get("mode"):
+        _meta["mode"] = run_mode
+    if "iteration_count" not in _meta:
+        _meta["iteration_count"] = context["iteration_count"]
+
     # PolicyEngine: validate → repair
     validation = _policy.validate(output)
     if not validation["valid"]:
