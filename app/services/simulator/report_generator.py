@@ -56,7 +56,7 @@ def generate_report_docx(
         _add_signal_table(doc, iteration_log)
         doc.add_page_break()
 
-    _parse_and_add_content(doc, report_text)
+    _parse_and_add_content(doc, report_text, skip_tables=True)
 
     if specialist_profile and specialist_profile.sessions_count > 1:
         doc.add_page_break()
@@ -178,7 +178,7 @@ def _add_tsi_block(doc, tsi: TSIComponents):
 
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run(tsi.interpretation)
+    run = p.add_run(f"Устойчивость позиции: {tsi.interpretation}")
     run.italic = True
     run.font.size = Pt(12)
     run.font.color.rgb = color
@@ -315,7 +315,7 @@ def _add_specialist_profile(doc, profile: SpecialistProfile):
 # CONTENT PARSER (markdown → docx)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _parse_and_add_content(doc, text):
+def _parse_and_add_content(doc, text, skip_tables: bool = False):
     lines = text.split("\n")
     i = 0
 
@@ -362,7 +362,8 @@ def _parse_and_add_content(doc, text):
             while i < len(lines) and "|" in lines[i].strip():
                 table_lines.append(lines[i].strip())
                 i += 1
-            _add_table(doc, table_lines)
+            if not skip_tables:
+                _add_table(doc, table_lines)
             continue
 
         if stripped.startswith(("- ", "• ", "* ", "— ")):

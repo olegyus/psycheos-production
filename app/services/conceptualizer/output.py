@@ -254,7 +254,7 @@ async def _assemble_layer_a(session: SessionState) -> LayerA:
     client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
     resp = await client.messages.create(
         model=_ANTHROPIC_MODEL,
-        max_tokens=2000,
+        max_tokens=4096,
         system=_LAYER_A_PROMPT,
         messages=[{"role": "user", "content": user_message}],
         timeout=120.0,
@@ -318,7 +318,7 @@ async def _assemble_layer_b(session: SessionState) -> LayerB:
     client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
     resp = await client.messages.create(
         model=_ANTHROPIC_MODEL,
-        max_tokens=2000,
+        max_tokens=4096,
         system=_LAYER_B_PROMPT,
         messages=[{"role": "user", "content": user_message}],
         timeout=120.0,
@@ -355,7 +355,7 @@ async def _assemble_layer_c(session: SessionState) -> LayerC:
     client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
     resp = await client.messages.create(
         model=_ANTHROPIC_MODEL,
-        max_tokens=2000,
+        max_tokens=4096,
         system=_LAYER_C_PROMPT,
         messages=[{"role": "user", "content": user_message}],
         timeout=120.0,
