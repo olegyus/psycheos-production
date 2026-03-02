@@ -353,7 +353,7 @@ async def handle_sim_report(
     client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
     resp = await client.messages.create(
         model=_ANTHROPIC_MODEL,
-        max_tokens=4096,
+        max_tokens=8192,
         system=system_prompt,
         messages=end_messages,
     )
