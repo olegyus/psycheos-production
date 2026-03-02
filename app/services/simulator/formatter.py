@@ -170,6 +170,13 @@ def format_intro(
     cci: float = 0.0,
 ) -> str:
     """Форматирует вводное сообщение при старте сессии."""
+    # Guard against None values passed from callers
+    cci = cci or 0.0
+    case_name = case_name or ""
+    client_info = client_info or ""
+    crisis = crisis or ""
+    goal = goal or ""
+    mode = mode or ""
 
     parsed = parse_claude_response(first_reply)
 

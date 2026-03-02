@@ -186,7 +186,8 @@ def format_to_txt(data: Dict[str, Any]) -> str:
     lines += ["-" * 80, ""]
 
     # ── Focus of tension ──────────────────────────────────────────────────────
-    focus = data.get("focus_of_tension", {})
+    # Some Claude responses use "clinical_directions" instead of "focus_of_tension"
+    focus = data.get("focus_of_tension") or data.get("clinical_directions") or {}
     lines += ["ОБЛАСТИ НАПРЯЖЕНИЯ", ""]
 
     domain_names = {
@@ -281,8 +282,24 @@ def format_to_txt(data: Dict[str, Any]) -> str:
 
     lines += ["-" * 80, ""]
 
+    # ── Top-level limitations ─────────────────────────────────────────────────
+    limitations = data.get("limitations")
+    if limitations:
+        lines += ["ОГРАНИЧЕНИЯ", ""]
+        if isinstance(limitations, str):
+            lines.append(limitations)
+        elif isinstance(limitations, list):
+            for item in limitations:
+                lines.append(f"  • {item}" if isinstance(item, str) else f"  • {str(item)}")
+        lines += ["", "-" * 80, ""]
+
     # ── Clarification directions ──────────────────────────────────────────────
-    directions = data.get("clarification_directions", [])
+    # Check "clarification_directions" (schema key) and "clinical_directions" (Claude variant)
+    directions = (
+        data.get("clarification_directions")
+        or data.get("clinical_directions")
+        or []
+    )
     if directions:
         lines += ["НАПРАВЛЕНИЯ ДЛЯ УТОЧНЕНИЯ", ""]
         for direction in directions:
@@ -297,6 +314,19 @@ def format_to_txt(data: Dict[str, Any]) -> str:
             else:
                 lines.append(str(direction))
             lines.append("")
+
+    # ── Next steps / recommendations ─────────────────────────────────────────
+    next_steps = data.get("next_steps_suggestions") or data.get("next_steps") or []
+    if next_steps:
+        lines += ["РЕКОМЕНДУЕМЫЕ СЛЕДУЮЩИЕ ШАГИ", ""]
+        if isinstance(next_steps, str):
+            lines.append(next_steps)
+        elif isinstance(next_steps, list):
+            for i, step in enumerate(next_steps, 1):
+                lines.append(
+                    f"  {i}. {step}" if isinstance(step, str) else f"  {i}. {str(step)}"
+                )
+        lines += ["", "-" * 80, ""]
 
     # ── Footer ────────────────────────────────────────────────────────────────
     lines += ["=" * 80, "Конец отчёта", "=" * 80]
