@@ -336,7 +336,7 @@ async def handle_callback(
             )
             return
 
-        lines = ["📋 *Ваши кейсы:*\n"]
+        lines = ["📋 Ваши кейсы:\n"]
         buttons = []
         for c in cases:
             label = c.client_ref or str(c.context_id)[:8]
@@ -347,7 +347,7 @@ async def handle_callback(
         buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="main_menu")])
 
         await query.edit_message_text(
-            text="\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown",
+            text="\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons),
         )
         return
 
@@ -386,12 +386,11 @@ async def handle_callback(
         created = ctx.created_at.strftime("%d.%m.%Y")
 
         await query.edit_message_text(
-            text=f"📄 *Кейс: {label}*\n"
+            text=f"📄 Кейс: «{label}»\n"
                  f"Создан: {created}\n"
                  f"Статус: {ctx.status}\n\n"
                  f"🛠 Выберите инструмент для запуска:",
             reply_markup=case_tools_kb(str(ctx.context_id)),
-            parse_mode="Markdown",
         )
         return
 
@@ -420,7 +419,7 @@ async def handle_callback(
             )
             return
 
-        lines = ["📦 *Архивированные кейсы:*\n"]
+        lines = ["📦 Архивированные кейсы:\n"]
         buttons = []
         for c in archived:
             label = c.client_ref or str(c.context_id)[:8]
@@ -429,7 +428,7 @@ async def handle_callback(
         buttons.append([InlineKeyboardButton("◀️ Мои кейсы", callback_data="cases_list")])
 
         await query.edit_message_text(
-            text="\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown",
+            text="\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons),
         )
         return
 
@@ -528,14 +527,14 @@ async def handle_callback(
         count_result = await db.execute(select(func.count(User.user_id)))
         total = count_result.scalar()
 
-        lines = [f"👥 *Пользователи* (всего: {total})\n"]
+        lines = [f"👥 Пользователи (всего: {total})\n"]
         for u in users:
             name = u.full_name or u.username or str(u.telegram_id)
             date = u.created_at.strftime("%d.%m.%Y")
             lines.append(f"• {name} — {date}")
 
         await query.edit_message_text(
-            text="\n".join(lines), reply_markup=back_to_admin_kb(), parse_mode="Markdown",
+            text="\n".join(lines), reply_markup=back_to_admin_kb(),
         )
         return
 
@@ -729,12 +728,11 @@ async def create_case(bot, db, state, chat_id, user_id, case_name):
     await bot.send_message(
         chat_id=chat_id,
         text=f"✅ Кейс «{label}» создан.\n\n"
-             f"📄 *Кейс: {label}*\n"
+             f"📄 Кейс: «{label}»\n"
              f"Создан: {created}\n"
              f"Статус: {ctx.status}\n\n"
              f"🛠 Выберите инструмент для запуска:",
         reply_markup=case_tools_kb(str(ctx.context_id)),
-        parse_mode="Markdown",
     )
 
 
@@ -1013,8 +1011,8 @@ async def create_invite_with_note(bot, db, chat_id, user_id, note):
              f"Заметка: {note}\n"
              f"Действует: 7 дней\n"
              f"Использований: 1\n\n"
-             f"Ссылка:\n`{link}`",
-        reply_markup=admin_menu_kb(), parse_mode="Markdown",
+             f"Ссылка:\n{link}",
+        reply_markup=admin_menu_kb(),
     )
 
 
@@ -1062,9 +1060,8 @@ async def handle_admin_credit_input(bot, db, chat_id, user_id, text: str) -> Non
     await upsert_chat_state(db, "pro", chat_id, "admin_panel", user_id=user_id)
     await bot.send_message(
         chat_id=chat_id,
-        text=f"✅ Начислено *{stars}⭐* пользователю {name}\n\n"
+        text=f"✅ Начислено {stars}⭐ пользователю {name}\n\n"
              f"Новый баланс: {new_balance}⭐",
-        parse_mode="Markdown",
         reply_markup=admin_menu_kb(),
     )
     logger.info("admin_credit: by=%d → to=%d stars=%d", user_id, target_tg_id, stars)

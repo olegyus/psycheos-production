@@ -167,6 +167,22 @@ COMPRESSION RULES (apply when CompressionProfile.compressed == True):
   - Do NOT normalise compression as flexibility, balance, or stability.
   - Do NOT diagnose. Do NOT use psychiatric labels.
 
+CLINICAL LANGUAGE GUIDANCE (apply throughout all sections):
+  Write so that a clinical psychologist recognises the client's presentation.
+  Avoid abstract internal jargon — use descriptive, functional language instead:
+  - Instead of "regulatory compression" → "a marked narrowing of the capacity to tolerate
+    uncertainty and plan ahead"
+  - Instead of "structural axis fixation" → "a stable, consistent tendency to..."
+  - Instead of "horizontal polarisation" → "a single dominant response direction at this level"
+  Connect structural patterns to recognisable experiential manifestations. For example:
+  - "this may appear as difficulty with long-term planning or sustained uncertainty"
+  - "a strong need for immediate resolution or closure"
+  - "rapid fatigue or disengagement when tasks lack clear structure"
+  - "avoidance of open-ended situations or decisions without a clear answer"
+  Do NOT diagnose. Do NOT use psychiatric or clinical labels.
+  Do describe how the pattern may manifest in the client's lived experience —
+  write so that a specialist reading the report recognises the clinical picture.
+
 OUTPUT — produce EXACTLY these 6 sections in Russian:
 
 ## 1. Центральная ось регуляции
