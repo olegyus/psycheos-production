@@ -45,6 +45,13 @@ logger = logging.getLogger(__name__)
 
 # ──────────────────── Helpers ────────────────────
 
+def escape_md(text: str) -> str:
+    """Escape Telegram Markdown v1 special characters in user-supplied strings."""
+    for ch in ("\\", "_", "*", "`", "["):
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
 async def get_user_by_tg(db: AsyncSession, telegram_id: int) -> User | None:
     result = await db.execute(
         select(User).where(User.telegram_id == telegram_id)
@@ -222,7 +229,7 @@ async def handle_text(
             await upsert_chat_state(db, "pro", chat_id, "main_menu", user_id=user_id)
             await bot.send_message(
                 chat_id=chat_id,
-                text=f"С возвращением, {user.full_name or 'специалист'}!",
+                text=f"С возвращением, {escape_md(user.full_name or 'специалист')}!",
                 reply_markup=main_menu_kb(),
             )
         else:
@@ -308,7 +315,7 @@ async def handle_invite_start(bot, db, chat_id, tg_user, invite_token):
 
     await bot.send_message(
         chat_id=chat_id,
-        text=f"✅ Добро пожаловать в PsycheOS, {tg_user.full_name or 'специалист'}!\n\n"
+        text=f"✅ Добро пожаловать в PsycheOS, {escape_md(tg_user.full_name or 'специалист')}!\n\n"
              f"Ваш аккаунт активирован.",
         reply_markup=main_menu_kb(),
     )
@@ -358,7 +365,7 @@ async def handle_callback(
         lines = ["📋 Ваши кейсы:\n"]
         buttons = []
         for c in cases:
-            label = c.client_ref or str(c.context_id)[:8]
+            label = escape_md(c.client_ref or str(c.context_id)[:8])
             lines.append(f"• {label}")
             buttons.append([InlineKeyboardButton(f"📄 {label}", callback_data=f"case_{c.context_id}")])
         buttons.append([InlineKeyboardButton("➕ Новый кейс", callback_data="case_new")])
@@ -436,7 +443,7 @@ async def handle_callback(
         lines = ["📦 Архивированные кейсы:\n"]
         buttons = []
         for c in archived:
-            label = c.client_ref or str(c.context_id)[:8]
+            label = escape_md(c.client_ref or str(c.context_id)[:8])
             lines.append(f"• {label}")
             buttons.append([InlineKeyboardButton(f"📄 {label}", callback_data=f"case_{c.context_id}")])
         buttons.append([InlineKeyboardButton("◀️ Мои кейсы", callback_data="cases_list")])
@@ -466,7 +473,7 @@ async def handle_callback(
             await query.edit_message_text("Нет доступа к этому кейсу.", reply_markup=back_to_main_kb())
             return
 
-        label = ctx.client_ref or str(ctx.context_id)[:8]
+        label = escape_md(ctx.client_ref or str(ctx.context_id)[:8])
         created = ctx.created_at.strftime("%d.%m.%Y")
 
         if ctx.archived_at is not None:
@@ -617,7 +624,7 @@ async def handle_callback(
 
         lines = [f"👥 Пользователи (всего: {total})\n"]
         for u in users:
-            name = u.full_name or u.username or str(u.telegram_id)
+            name = escape_md(u.full_name or u.username or str(u.telegram_id))
             date = u.created_at.strftime("%d.%m.%Y")
             lines.append(f"• {name} — {date}")
 
@@ -801,7 +808,7 @@ async def handle_case_archive(query, db, user_id, context_id_str):
     ctx.status = "archived"
     await db.flush()
 
-    label = ctx.client_ref or str(ctx.context_id)[:8]
+    label = escape_md(ctx.client_ref or str(ctx.context_id)[:8])
     await query.edit_message_text(
         text=f"📦 Кейс «{label}» перемещён в архив.",
         reply_markup=InlineKeyboardMarkup([
@@ -834,7 +841,7 @@ async def handle_case_restore(query, db, user_id, context_id_str):
     ctx.status = "active"
     await db.flush()
 
-    label = ctx.client_ref or str(ctx.context_id)[:8]
+    label = escape_md(ctx.client_ref or str(ctx.context_id)[:8])
     created = ctx.created_at.strftime("%d.%m.%Y")
     await query.edit_message_text(
         text=f"✅ Кейс «{label}» восстановлен.\n\n"
@@ -864,7 +871,7 @@ async def show_case_delete_confirm(query, db, user_id, context_id_str):
         await query.answer("Нет доступа к этому кейсу.", show_alert=True)
         return
 
-    label = ctx.client_ref or str(ctx.context_id)[:8]
+    label = escape_md(ctx.client_ref or str(ctx.context_id)[:8])
     await query.edit_message_text(
         text=f"🗑 Удалить кейс «{label}» и все результаты?\n\n"
              f"Это действие необратимо.",
@@ -898,7 +905,7 @@ async def handle_case_delete_yes(query, db, user_id, context_id_str):
     ctx.status = "deleted"
     await db.flush()
 
-    label = ctx.client_ref or str(ctx.context_id)[:8]
+    label = escape_md(ctx.client_ref or str(ctx.context_id)[:8])
     await query.edit_message_text(
         text=f"🗑 Кейс «{label}» удалён.",
         reply_markup=InlineKeyboardMarkup([
@@ -916,7 +923,7 @@ async def create_case(bot, db, state, chat_id, user_id, case_name):
     await db.flush()
     await upsert_chat_state(db, "pro", chat_id, "main_menu", user_id=user_id)
 
-    label = ctx.client_ref or str(ctx.context_id)[:8]
+    label = escape_md(ctx.client_ref or str(ctx.context_id)[:8])
     created = ctx.created_at.strftime("%d.%m.%Y")
     await bot.send_message(
         chat_id=chat_id,
@@ -1247,7 +1254,7 @@ async def handle_admin_credit_input(bot, db, chat_id, user_id, text: str) -> Non
         note=f"Admin credit by tg:{user_id}",
     )
 
-    name = target_user.full_name or target_user.username or str(target_tg_id)
+    name = escape_md(target_user.full_name or target_user.username or str(target_tg_id))
     new_balance = wallet.balance_stars
 
     await upsert_chat_state(db, "pro", chat_id, "admin_panel", user_id=user_id)
