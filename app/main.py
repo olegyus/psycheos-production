@@ -4,6 +4,7 @@ PsycheOS Backend — Main Application
 Single FastAPI service handling webhooks for all 5 Telegram bots.
 """
 import logging
+import os
 from contextlib import asynccontextmanager
 
 import sentry_sdk
@@ -38,10 +39,42 @@ if settings.SENTRY_DSN:
     logger.info("Sentry initialized")
 
 
-# --- Lifespan: create tables on startup ---
+# --- Startup migration: ensure archived_at / deleted_at exist on contexts ---
+def _run_pending_migrations() -> None:
+    url = os.environ.get("DATABASE_URL_DIRECT") or os.environ.get("DATABASE_URL", "")
+    if not url:
+        logger.warning("_run_pending_migrations: no DATABASE_URL_DIRECT / DATABASE_URL — skipping")
+        return
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name='contexts' AND column_name='archived_at'"
+            )
+            if not cur.fetchone():
+                cur.execute("ALTER TABLE contexts ADD COLUMN archived_at TIMESTAMPTZ")
+                cur.execute("ALTER TABLE contexts ADD COLUMN deleted_at TIMESTAMPTZ")
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_contexts_archived_at ON contexts(archived_at)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_contexts_deleted_at ON contexts(deleted_at)"
+                )
+                conn.commit()
+                logger.info("Migration applied: archived_at + deleted_at added to contexts")
+            else:
+                logger.info("Migration check: archived_at already exists, skipping")
+    except Exception as e:
+        logger.error(f"_run_pending_migrations failed: {e}")
+
+
+# --- Lifespan: run migrations, then keep engine alive ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting PsycheOS Backend...")
+    _run_pending_migrations()
     yield
     logger.info("Shutting down PsycheOS Backend...")
     await engine.dispose()
