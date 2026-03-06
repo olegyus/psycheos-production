@@ -21,7 +21,12 @@ target_metadata = Base.metadata
 def get_url() -> str:
     """Use DATABASE_URL_DIRECT (port 5432) — bypasses PgBouncer, required by Alembic."""
     from app.config import settings
-    return settings.DATABASE_URL_DIRECT
+    url = settings.DATABASE_URL_DIRECT
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+    elif url.startswith("postgresql+asyncpg://"):
+        url = url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
+    return url
 
 
 def run_migrations_offline() -> None:
