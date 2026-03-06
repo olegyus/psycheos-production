@@ -135,16 +135,31 @@ def exit_reference_kb() -> InlineKeyboardMarkup:
 
 
 def case_tools_kb(context_id: str) -> InlineKeyboardMarkup:
-    """Keyboard for case view — tool launch buttons + archive + back."""
+    """Keyboard for active case view — tool launch buttons, archive/delete, back."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🧠 Интерпретатор",    callback_data=f"launch_interpretator_{context_id}")],
         [InlineKeyboardButton("💡 Концептуализатор", callback_data=f"launch_conceptualizator_{context_id}")],
         [InlineKeyboardButton("🎭 Симулятор",        callback_data=f"launch_simulator_{context_id}")],
-        [InlineKeyboardButton("📊 Скрининг",           callback_data=f"screen_menu_{context_id}")],
+        [InlineKeyboardButton("📊 Скрининг",         callback_data=f"screen_menu_{context_id}")],
         [InlineKeyboardButton("📊 История результатов", callback_data=f"case_artifacts_{context_id}")],
         [InlineKeyboardButton("📤 Ссылка для клиента", callback_data=f"screen_link_{context_id}")],
-        [InlineKeyboardButton("🗄 Архивировать",     callback_data=f"case_archive_{context_id}")],
-        [InlineKeyboardButton("◀️ Мои кейсы",       callback_data="cases_list")],
+        [
+            InlineKeyboardButton("📦 Архивировать", callback_data=f"case_archive_{context_id}"),
+            InlineKeyboardButton("🗑 Удалить",      callback_data=f"case_delete_confirm_{context_id}"),
+        ],
+        [InlineKeyboardButton("◀️ Мои кейсы", callback_data="cases_list")],
+    ])
+
+
+def case_tools_archived_kb(context_id: str) -> InlineKeyboardMarkup:
+    """Keyboard for archived case view — read-only artifacts, restore, delete."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 История результатов", callback_data=f"case_artifacts_{context_id}")],
+        [
+            InlineKeyboardButton("🔄 Восстановить", callback_data=f"case_restore_{context_id}"),
+            InlineKeyboardButton("🗑 Удалить",       callback_data=f"case_delete_confirm_{context_id}"),
+        ],
+        [InlineKeyboardButton("◀️ Архив", callback_data="cases_list_archived")],
     ])
 
 
@@ -321,7 +336,11 @@ async def handle_callback(
             return
         result = await db.execute(
             select(Context)
-            .where(Context.specialist_user_id == user.user_id, Context.status == "active")
+            .where(
+                Context.specialist_user_id == user.user_id,
+                Context.archived_at.is_(None),
+                Context.deleted_at.is_(None),
+            )
             .order_by(Context.created_at.desc()).limit(20)
         )
         cases = result.scalars().all()
@@ -369,34 +388,25 @@ async def handle_callback(
         await show_artifact_detail(query, bot, db, artifact_id_str, chat_id)
         return
 
-    if data.startswith("case_") and data != "case_new":
-        context_id = data.replace("case_", "")
-        result = await db.execute(select(Context).where(Context.context_id == context_id))
-        ctx = result.scalar_one_or_none()
-        if not ctx:
-            await query.edit_message_text("Кейс не найден.", reply_markup=back_to_main_kb())
-            return
-
-        user = await get_user_by_tg(db, user_id)
-        if not user or ctx.specialist_user_id != user.user_id:
-            await query.edit_message_text("Нет доступа к этому кейсу.", reply_markup=back_to_main_kb())
-            return
-
-        label = ctx.client_ref or str(ctx.context_id)[:8]
-        created = ctx.created_at.strftime("%d.%m.%Y")
-
-        await query.edit_message_text(
-            text=f"📄 Кейс: «{label}»\n"
-                 f"Создан: {created}\n"
-                 f"Статус: {ctx.status}\n\n"
-                 f"🛠 Выберите инструмент для запуска:",
-            reply_markup=case_tools_kb(str(ctx.context_id)),
-        )
-        return
-
+    # ── Specific case_ actions (must come before generic case_ handler) ──────
     if data.startswith("case_archive_"):
         context_id_str = data[len("case_archive_"):]
         await handle_case_archive(query, db, user_id, context_id_str)
+        return
+
+    if data.startswith("case_restore_"):
+        context_id_str = data[len("case_restore_"):]
+        await handle_case_restore(query, db, user_id, context_id_str)
+        return
+
+    if data.startswith("case_delete_confirm_"):
+        context_id_str = data[len("case_delete_confirm_"):]
+        await show_case_delete_confirm(query, db, user_id, context_id_str)
+        return
+
+    if data.startswith("case_delete_yes_"):
+        context_id_str = data[len("case_delete_yes_"):]
+        await handle_case_delete_yes(query, db, user_id, context_id_str)
         return
 
     if data == "cases_list_archived":
@@ -405,7 +415,11 @@ async def handle_callback(
             return
         result = await db.execute(
             select(Context)
-            .where(Context.specialist_user_id == user.user_id, Context.status == "archived")
+            .where(
+                Context.specialist_user_id == user.user_id,
+                Context.archived_at.isnot(None),
+                Context.deleted_at.is_(None),
+            )
             .order_by(Context.created_at.desc()).limit(20)
         )
         archived = result.scalars().all()
@@ -430,6 +444,47 @@ async def handle_callback(
         await query.edit_message_text(
             text="\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons),
         )
+        return
+
+    # ── Generic case view (case_{uuid}) ──────────────────────────────────────
+    if data.startswith("case_") and data != "case_new":
+        context_id_str = data[len("case_"):]
+        try:
+            context_uuid = uuid.UUID(context_id_str)
+        except ValueError:
+            await query.edit_message_text("Кейс не найден.", reply_markup=back_to_main_kb())
+            return
+
+        result = await db.execute(select(Context).where(Context.context_id == context_uuid))
+        ctx = result.scalar_one_or_none()
+        if not ctx or ctx.deleted_at is not None:
+            await query.edit_message_text("Кейс не найден.", reply_markup=back_to_main_kb())
+            return
+
+        user = await get_user_by_tg(db, user_id)
+        if not user or ctx.specialist_user_id != user.user_id:
+            await query.edit_message_text("Нет доступа к этому кейсу.", reply_markup=back_to_main_kb())
+            return
+
+        label = ctx.client_ref or str(ctx.context_id)[:8]
+        created = ctx.created_at.strftime("%d.%m.%Y")
+
+        if ctx.archived_at is not None:
+            archived_date = ctx.archived_at.strftime("%d.%m.%Y")
+            await query.edit_message_text(
+                text=f"📄 Кейс: «{label}» 📦\n"
+                     f"Создан: {created}\n"
+                     f"Архивирован: {archived_date}\n\n"
+                     f"Инструменты недоступны. История результатов доступна.",
+                reply_markup=case_tools_archived_kb(str(ctx.context_id)),
+            )
+        else:
+            await query.edit_message_text(
+                text=f"📄 Кейс: «{label}»\n"
+                     f"Создан: {created}\n\n"
+                     f"🛠 Выберите инструмент для запуска:",
+                reply_markup=case_tools_kb(str(ctx.context_id)),
+            )
         return
 
     if data.startswith("launch_"):
@@ -691,23 +746,119 @@ async def handle_case_archive(query, db, user_id, context_id_str):
 
     result = await db.execute(select(Context).where(Context.context_id == context_id))
     ctx = result.scalar_one_or_none()
-    if not ctx:
+    if not ctx or ctx.deleted_at is not None:
         await query.answer("Кейс не найден.", show_alert=True)
         return
 
     user = await get_user_by_tg(db, user_id)
     if not user or ctx.specialist_user_id != user.user_id:
-
-
         await query.answer("Нет доступа к этому кейсу.", show_alert=True)
         return
 
+    ctx.archived_at = datetime.now(timezone.utc)
     ctx.status = "archived"
     await db.flush()
 
     label = ctx.client_ref or str(ctx.context_id)[:8]
     await query.edit_message_text(
-        text=f"🗄 Кейс «{label}» перемещён в архив.",
+        text=f"📦 Кейс «{label}» перемещён в архив.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📦 Архив", callback_data="cases_list_archived")],
+            [InlineKeyboardButton("◀️ Мои кейсы", callback_data="cases_list")],
+        ]),
+    )
+
+
+async def handle_case_restore(query, db, user_id, context_id_str):
+    """Restore an archived case back to active."""
+    try:
+        context_id = uuid.UUID(context_id_str)
+    except ValueError:
+        await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
+        return
+
+    result = await db.execute(select(Context).where(Context.context_id == context_id))
+    ctx = result.scalar_one_or_none()
+    if not ctx or ctx.deleted_at is not None:
+        await query.answer("Кейс не найден.", show_alert=True)
+        return
+
+    user = await get_user_by_tg(db, user_id)
+    if not user or ctx.specialist_user_id != user.user_id:
+        await query.answer("Нет доступа к этому кейсу.", show_alert=True)
+        return
+
+    ctx.archived_at = None
+    ctx.status = "active"
+    await db.flush()
+
+    label = ctx.client_ref or str(ctx.context_id)[:8]
+    created = ctx.created_at.strftime("%d.%m.%Y")
+    await query.edit_message_text(
+        text=f"✅ Кейс «{label}» восстановлен.\n\n"
+             f"📄 Кейс: «{label}»\n"
+             f"Создан: {created}\n\n"
+             f"🛠 Выберите инструмент для запуска:",
+        reply_markup=case_tools_kb(str(ctx.context_id)),
+    )
+
+
+async def show_case_delete_confirm(query, db, user_id, context_id_str):
+    """Show deletion confirmation dialog."""
+    try:
+        context_id = uuid.UUID(context_id_str)
+    except ValueError:
+        await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
+        return
+
+    result = await db.execute(select(Context).where(Context.context_id == context_id))
+    ctx = result.scalar_one_or_none()
+    if not ctx or ctx.deleted_at is not None:
+        await query.answer("Кейс не найден.", show_alert=True)
+        return
+
+    user = await get_user_by_tg(db, user_id)
+    if not user or ctx.specialist_user_id != user.user_id:
+        await query.answer("Нет доступа к этому кейсу.", show_alert=True)
+        return
+
+    label = ctx.client_ref or str(ctx.context_id)[:8]
+    await query.edit_message_text(
+        text=f"🗑 Удалить кейс «{label}» и все результаты?\n\n"
+             f"Это действие необратимо.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Да, удалить", callback_data=f"case_delete_yes_{context_id_str}")],
+            [InlineKeyboardButton("❌ Отмена", callback_data=f"case_{context_id_str}")],
+        ]),
+    )
+
+
+async def handle_case_delete_yes(query, db, user_id, context_id_str):
+    """Soft-delete a case (sets deleted_at; hidden everywhere)."""
+    try:
+        context_id = uuid.UUID(context_id_str)
+    except ValueError:
+        await query.answer("Ошибка: неверный ID кейса.", show_alert=True)
+        return
+
+    result = await db.execute(select(Context).where(Context.context_id == context_id))
+    ctx = result.scalar_one_or_none()
+    if not ctx or ctx.deleted_at is not None:
+        await query.answer("Кейс не найден.", show_alert=True)
+        return
+
+    user = await get_user_by_tg(db, user_id)
+    if not user or ctx.specialist_user_id != user.user_id:
+        await query.answer("Нет доступа к этому кейсу.", show_alert=True)
+        return
+
+    ctx.deleted_at = datetime.now(timezone.utc)
+    ctx.status = "deleted"
+    await db.flush()
+
+    label = ctx.client_ref or str(ctx.context_id)[:8]
+    await query.edit_message_text(
+        text=f"🗑 Кейс «{label}» удалён.",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("◀️ Мои кейсы", callback_data="cases_list")],
         ]),
