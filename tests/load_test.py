@@ -475,6 +475,7 @@ async def _run_user(
 
 # ── Main test ──────────────────────────────────────────────────────────────────
 
+@pytest.mark.slow
 async def test_30_concurrent_interpreter_sessions() -> None:
     """
     Simulate NUM_USERS concurrent Interpreter sessions (all mocked).

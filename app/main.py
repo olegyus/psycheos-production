@@ -40,6 +40,7 @@ if settings.SENTRY_DSN:
 
 
 # --- Startup migration: ensure archived_at / deleted_at exist on contexts ---
+# TODO: remove after confirming migration 0007 applied on prod
 def _run_pending_migrations() -> None:
     url = os.environ.get("DATABASE_URL_DIRECT") or os.environ.get("DATABASE_URL", "")
     if not url:
