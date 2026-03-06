@@ -3,6 +3,7 @@ Context model — a case/client that specialist works with.
 """
 import uuid
 from datetime import datetime
+from typing import Optional
 from sqlalchemy import String, DateTime, text, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -27,7 +28,7 @@ class Context(Base):
     )  # specialist's internal label for client
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="active"
-    )  # active | archived
+    )  # active | archived | deleted  (legacy; filters use archived_at/deleted_at)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -38,6 +39,12 @@ class Context(Base):
         nullable=False,
         server_default=text("now()"),
         onupdate=text("now()"),
+    )
+    archived_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     __table_args__ = (
