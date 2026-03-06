@@ -19,3 +19,9 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+
+# Office / binary docs (keep only locally, not in git)
+*.docx

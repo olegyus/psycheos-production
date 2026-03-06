@@ -22,52 +22,89 @@ psycheos-production/
 │   ├── main.py               # FastAPI app entry point; registers all webhook routers
 │   ├── config.py             # All settings via pydantic-settings (env vars)
 │   ├── database.py           # Async SQLAlchemy engine + session factory
+│   ├── data/
+│   │   └── key_psycheos.md   # PsycheOS theory reference (used by Pro bot справочник)
 │   ├── models/
-│   │   ├── user.py                    # User (specialist/client) — table: users
-│   │   ├── invite.py                  # Invite tokens — table: invites
-│   │   ├── context.py                 # Case/client context — table: contexts
-│   │   ├── bot_chat_state.py          # FSM state per (bot, chat) — table: bot_chat_state
-│   │   ├── telegram_dedup.py          # Dedup table — table: telegram_update_dedup
-│   │   └── screening_assessment.py    # Screen v2 assessment — table: screening_assessment ✅
+│   │   ├── __init__.py              # Imports all models → Base.metadata для create_all
+│   │   ├── user.py                  # User (specialist/client) — table: users
+│   │   ├── invite.py                # Invite tokens — table: invites
+│   │   ├── context.py               # Case/client context — table: contexts
+│   │   ├── bot_chat_state.py        # FSM state per (bot, chat) — table: bot_chat_state
+│   │   ├── telegram_dedup.py        # Dedup table — table: telegram_update_dedup
+│   │   ├── link_token.py            # Link tokens (passes) — table: link_tokens
+│   │   ├── artifact.py              # Tool session outputs — table: artifacts
+│   │   ├── job.py                   # Async worker jobs — table: jobs
+│   │   ├── outbox_message.py        # Telegram outbox — table: outbox_messages
+│   │   ├── wallet.py                # Stars wallets — table: wallets
+│   │   ├── usage_ledger.py          # Billing ledger — table: usage_ledger
+│   │   ├── ai_rate.py               # AI cost rates — table: ai_rates
+│   │   └── screening_assessment.py  # Screen v2 assessment — table: screening_assessment
+│   ├── routers/
+│   │   ├── links.py          # HTTP API: /v1/links/* (issue/verify link tokens)
+│   │   └── artifacts.py      # HTTP API: /v1/artifacts/*
 │   ├── webhooks/
 │   │   ├── router_factory.py    # Generic webhook router factory (shared pipeline)
 │   │   ├── common.py            # Shared logic: secret verify, dedup, FSM load/save
-│   │   ├── pro.py               # Pro bot handler (Phase 2 — full implementation)
-│   │   ├── interpretator.py     # Interpretator bot (Phase 4 ✅ migrated)
-│   │   ├── conceptualizator.py  # Conceptualizator bot (Phase 4 ✅ migrated)
+│   │   ├── pro.py               # Pro bot handler ✅
+│   │   ├── interpretator.py     # Interpretator bot ✅
+│   │   ├── conceptualizator.py  # Conceptualizator bot ✅
 │   │   ├── screen.py            # Screen v2 bot — full FSM handler ✅
-│   │   ├── simulator.py         # Simulator bot — full FSM handler ✅
-│   │   └── stubs.py             # (пустой — все боты мигрированы)
+│   │   └── simulator.py         # Simulator bot ✅
 │   ├── services/
+│   │   ├── billing.py           # Stars billing: reserve/commit/cancel
+│   │   ├── links.py             # issue_link / verify_link logic
+│   │   ├── artifacts.py         # save_artifact / get_artifacts
+│   │   ├── job_queue.py         # enqueue / claim_next / complete_job
+│   │   ├── outbox.py            # enqueue_message / flush_outbox
 │   │   ├── interpreter/         # Interpreter service modules
+│   │   │   ├── prompts.py       #   INTAKE, MATERIAL_CHECK, CLARIFICATION_LOOP, QUESTIONS_GENERATION, INTERP prompts
+│   │   │   ├── policy_engine.py #   _run_material_check, _parse_completeness
+│   │   │   └── structured_results.py # Result Pydantic models
 │   │   ├── conceptualizer/      # Conceptualizer service modules
 │   │   │   ├── enums.py         #   SessionStateEnum, HypothesisType, PsycheLevelEnum, …
 │   │   │   ├── models.py        #   Pydantic v2: SessionState, Hypothesis, LayerA/B/C, …
 │   │   │   ├── decision_policy.py #  PriorityChecker + QuestionGenerator + selector
 │   │   │   ├── analysis.py      #   Async hypothesis extraction via Claude
-│   │   │   └── output.py        #   Async three-layer output assembly via Claude
+│   │   │   ├── output.py        #   Async three-layer output assembly via Claude
+│   │   │   └── report.py        #   generate_concept_docx() → io.BytesIO
 │   │   ├── screen/              # Screen v2 service modules ✅
-│   │   │   ├── engine.py        #   ScreeningEngine: vector aggregation, tension matrix, rigidity, confidence ✅
-│   │   │   ├── weight_matrix.py #   PHASE1_SCREENS (6) + PHASE2_TEMPLATES (20 nodes) with axis/layer weights ✅
-│   │   │   ├── screen_bank.py   #   get_phase1_screen / get_phase2_template / get_all_phase2_nodes ✅
-│   │   │   ├── prompts.py       #   6 Claude prompts (router/constructor/report/client_report/session_bridge/stop) + assemble_prompt() ✅
-│   │   │   ├── orchestrator.py  #   ScreenOrchestrator: 3-phase flow, Claude routing, stop decision ✅
-│   │   │   └── report.py        #   generate_full_report / generate_client_summary / format_report_txt / generate_report_docx ✅
-│   │   └── simulator/           # Simulator service modules ✅
-│   │       ├── schemas.py       #   Pydantic v2: SessionData, FSMState, SpecialistProfile, TSIComponents, …
-│   │       ├── cases.py         #   BUILTIN_CASES (3 встроенных кейса)
-│   │       ├── goals.py         #   GOAL_LABELS, MODE_LABELS
-│   │       ├── system_prompt.py #   build_system_prompt(case, goal, mode) → str
-│   │       ├── formatter.py     #   parse_claude_response, format_for_telegram, build_iteration_log
-│   │       └── report_generator.py # generate_report_docx() → io.BytesIO
+│   │   │   ├── engine.py        #   ScreeningEngine: vector aggregation, tension matrix, rigidity, confidence
+│   │   │   ├── weight_matrix.py #   PHASE1_SCREENS (6) + PHASE2_TEMPLATES (20 nodes) with axis/layer weights
+│   │   │   ├── screen_bank.py   #   get_phase1_screen / get_phase2_template / get_all_phase2_nodes
+│   │   │   ├── prompts.py       #   6 Claude prompts + assemble_prompt()
+│   │   │   ├── orchestrator.py  #   ScreenOrchestrator: 3-phase flow, Claude routing, stop decision
+│   │   │   └── report.py        #   generate_full_report / generate_client_summary / generate_report_docx
+│   │   ├── simulator/           # Simulator service modules ✅
+│   │   │   ├── schemas.py       #   Pydantic v2: SessionData, FSMState, SpecialistProfile, TSIComponents, …
+│   │   │   ├── cases.py         #   BUILTIN_CASES (3 встроенных кейса)
+│   │   │   ├── goals.py         #   GOAL_LABELS, MODE_LABELS
+│   │   │   ├── system_prompt.py #   build_system_prompt(case, goal, mode) → str
+│   │   │   ├── formatter.py     #   parse_claude_response, format_for_telegram, build_iteration_log
+│   │   │   └── report_generator.py # generate_report_docx() → io.BytesIO
+│   │   └── pro/
+│   │       └── reference_prompt.py  # Loads key_psycheos.md → Claude Haiku справочник
+│   ├── worker/
+│   │   ├── __main__.py          # Worker entry point (python -m app.worker)
+│   │   └── handlers/
+│   │       ├── pro.py           #   pro_reference job
+│   │       ├── interpretator.py #   interp_photo / interp_intake / interp_questions / interp_run jobs
+│   │       ├── conceptualizator.py # concept_hypothesis / concept_output jobs
+│   │       ├── screen.py        #   (screen report runs inline in webhook)
+│   │       └── simulator.py     #   sim_launch / sim_launch_custom / sim_turn / sim_report jobs
 │   └── utils/
-│       └── idempotency.py    # Idempotency key builder (format from Dev Spec Appendix C)
+│       └── idempotency.py       # Idempotency key builder (format from Dev Spec Appendix C)
+├── alembic/
+│   └── versions/                # 0001 → 0002 → … → 0008 (linear chain)
 ├── scripts/
-│   └── set_webhooks.py       # One-shot script to register webhooks with Telegram API
+│   ├── set_webhooks.py          # One-shot: register webhook URLs with Telegram API
+│   └── cleanup_stuck_reservations.py  # Utility: reset stuck billing reservations
 ├── tests/
-│   ├── __init__.py
-│   └── test_engine.py        # 31 unit tests for ScreeningEngine ✅
-├── Procfile                  # Railway: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+│   ├── conftest.py              # Env var injection for all tests
+│   ├── test_engine.py           # 31 unit tests for ScreeningEngine
+│   ├── test_smoke.py            # Happy-path smoke tests (one per bot, all mocked)
+│   └── load_test.py             # 30 concurrent Interpreter sessions (@pytest.mark.slow)
+├── .env.example                 # Template — copy to .env and fill in secrets
+├── Procfile                     # Railway: web + worker processes
 ├── requirements.txt
 └── .gitignore
 ```

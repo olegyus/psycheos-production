@@ -1,3 +1,0 @@
-"""
-Telegram bots for PsycheOS.
-"""
