@@ -509,21 +509,54 @@ async def handle_callback(
         context_id_str = data[len("screen_link_"):]
         await handle_screen_link(query, bot, db, chat_id, user_id, context_id_str)
         return
+    if data.startswith("topup_"):
+        amount_str = data[len("topup_"):]
+        try:
+            amount = int(amount_str)
+        except ValueError:
+            await query.answer("Ошибка суммы.", show_alert=True)
+            return
+        if amount not in (50, 100, 200, 500):
+            await query.answer("Неверная сумма.", show_alert=True)
+            return
+        await bot.send_invoice(
+            chat_id=chat_id,
+            title=f"Пополнение {amount} ⭐",
+            description=f"Пополнение баланса PsycheOS на {amount} Stars",
+            payload=f"topup_{amount}",
+            currency="XTR",
+            prices=[LabeledPrice(label=f"{amount} Stars", amount=amount)],
+        )
+        return
+
     if data == "show_balance":
         user = await get_user_by_tg(db, user_id)
         if not user:
             await query.answer("Нет доступа.", show_alert=True)
             return
         wallet = await get_or_create_wallet(db, user.user_id, user_id)
+        available = wallet.balance_stars - wallet.reserved_stars
         await query.edit_message_text(
             text=(
                 f"💰 *Баланс*\n\n"
-                f"Доступно: {wallet.balance_stars - wallet.reserved_stars} ⭐\n"
+                f"Доступно: {available} ⭐\n"
                 f"Зарезервировано: {wallet.reserved_stars} ⭐\n\n"
-                f"_Пополнение происходит автоматически при запуске инструмента, "
-                f"если средств недостаточно._"
+                f"📊 *Стоимость инструментов:*\n"
+                f"📊 Скрининг — ~50 ⭐\n"
+                f"🧠 Интерпретатор — ~60 ⭐\n"
+                f"💡 Концептуализатор — ~90 ⭐\n"
+                f"🎭 Симулятор — ~110 ⭐\n\n"
+                f"_Выберите сумму для пополнения:_"
             ),
             reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("⭐ 50 Stars",  callback_data="topup_50"),
+                    InlineKeyboardButton("⭐ 100 Stars", callback_data="topup_100"),
+                ],
+                [
+                    InlineKeyboardButton("⭐ 200 Stars", callback_data="topup_200"),
+                    InlineKeyboardButton("⭐ 500 Stars", callback_data="topup_500"),
+                ],
                 [InlineKeyboardButton("◀️ Главное меню", callback_data="main_menu")],
             ]),
             parse_mode="Markdown",
@@ -694,6 +727,15 @@ async def handle_successful_payment(
         reply_markup=main_menu_kb(),
     )
     logger.info("topup: tg_id=%d stars=%d charge_id=%s", user_id, stars, charge_id)
+
+    if settings.ADMIN_CHAT_ID:
+        try:
+            await bot.send_message(
+                chat_id=settings.ADMIN_CHAT_ID,
+                text=f"💰 Пополнение: user={user_id} amount={stars}⭐ balance={new_balance}⭐",
+            )
+        except Exception:
+            logger.warning("admin notify failed for topup user=%d", user_id)
 
 
 # ──────────────────── FSM Actions ────────────────────
