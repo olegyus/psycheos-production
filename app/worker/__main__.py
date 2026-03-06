@@ -128,7 +128,9 @@ async def _cleanup_dedup_table() -> None:
 
 # ── Core helpers ──────────────────────────────────────────────────────────────
 
-async def _mark_job_failed(job_id: uuid.UUID, error: str) -> None:
+async def _mark_job_failed(
+    job_id: uuid.UUID, error: str, bots: Optional[dict[str, Bot]] = None
+) -> None:
     """Open a fresh session and mark the job as failed."""
     try:
         async with async_session() as db:
@@ -178,6 +180,28 @@ async def _mark_job_failed(job_id: uuid.UUID, error: str) -> None:
                             job_row.chat_id,
                         )
 
+                # ── Admin notification on permanent failure ───────────────
+                if (
+                    job_row.status == "failed"
+                    and settings.ADMIN_CHAT_ID
+                    and bots
+                    and "pro" in bots
+                ):
+                    try:
+                        await bots["pro"].send_message(
+                            chat_id=settings.ADMIN_CHAT_ID,
+                            text=(
+                                f"⚠️ Job failed permanently:\n"
+                                f"type={job_row.job_type}\n"
+                                f"user={job_row.chat_id}\n"
+                                f"error: {error[:200]}"
+                            ),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "[worker] admin notify failed for job_id=%s", job_id
+                        )
+
                 await db.commit()
     except Exception:
         logger.exception("[worker] could not mark job_id=%s as failed", job_id)
@@ -203,7 +227,7 @@ async def _process_one_job(bots: dict[str, Bot]) -> bool:
     handler = REGISTRY.get(job_type)
     if handler is None:
         logger.error("[worker] unknown job_type=%s job_id=%s", job_type, job_id)
-        await _mark_job_failed(job_id, f"unknown job_type: {job_type}")
+        await _mark_job_failed(job_id, f"unknown job_type: {job_type}", bots)
         return True
 
     logger.info("[worker] → job_type=%s job_id=%s", job_type, job_id)
@@ -245,7 +269,7 @@ async def _process_one_job(bots: dict[str, Bot]) -> bool:
 
     except Exception as exc:
         logger.exception("[worker] ✗ job failed job_id=%s: %s", job_id, exc)
-        await _mark_job_failed(job_id, str(exc))
+        await _mark_job_failed(job_id, str(exc), bots)
 
     return True
 

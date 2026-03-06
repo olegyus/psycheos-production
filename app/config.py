@@ -45,6 +45,7 @@ class Settings(BaseSettings):
 
     # --- Admin ---
     ADMIN_IDS: str = ""  # comma-separated telegram IDs, e.g. "123456,789012"
+    ADMIN_CHAT_ID: Optional[int] = None  # single chat/user ID for admin alerts
 
     # --- App ---
     WEBHOOK_BASE_URL: str = ""
