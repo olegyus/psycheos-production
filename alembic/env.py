@@ -1,8 +1,6 @@
-import asyncio
 from logging.config import fileConfig
 
-from sqlalchemy import pool
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import create_engine, pool
 from alembic import context
 
 # Alembic Config object
@@ -19,13 +17,15 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    """Use DATABASE_URL_DIRECT (port 5432) — bypasses PgBouncer, required by Alembic."""
+    """Return DATABASE_URL_DIRECT with psycopg3 sync scheme (postgresql+psycopg://)."""
     from app.config import settings
     url = settings.DATABASE_URL_DIRECT
-    if url.startswith("postgresql://"):
-        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
-    elif url.startswith("postgresql+asyncpg://"):
+    # Normalise to psycopg3 sync dialect — same driver the app uses
+    if url.startswith("postgresql+asyncpg://"):
         url = url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
+    elif url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+    # postgresql+psycopg:// already correct — leave as-is
     return url
 
 
@@ -40,24 +40,13 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-async def run_async_migrations() -> None:
-    engine = create_async_engine(
-        get_url(),
-        poolclass=pool.NullPool,
-    )
-    async with engine.begin() as conn:
-        await conn.run_sync(do_run_migrations)
-    await engine.dispose()
-
-
 def run_migrations_online() -> None:
-    asyncio.run(run_async_migrations())
+    engine = create_engine(get_url(), poolclass=pool.NullPool)
+    with engine.connect() as connection:
+        context.configure(connection=connection, target_metadata=target_metadata)
+        with context.begin_transaction():
+            context.run_migrations()
+    engine.dispose()
 
 
 if context.is_offline_mode():
